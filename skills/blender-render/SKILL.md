@@ -50,6 +50,10 @@ bien con figuras asimétricas (una cola o un arma de un lado). En figuras casi s
 distingue poco el ángulo (los mejores difieren en centésimas): entonces elige tú el lado mirando la
 imagen (hacia dónde apunta el hocico, qué brazo se ve más).
 
+**Varias vistas**: repite `-Reference` y `-View` en orden (`-Reference a.png -Reference perfil.png -View
+"0.4,-1,0.2" -View right`). Hace una comparación por vista (`comparar_1.png`, `comparar_2.png`) y
+devuelve `views` con el IoU de cada una y `meanIoU`.
+
 `-NoAlign` (sin alinear), `-NoOverlay` (sin panel de siluetas), `-NoGuides`. Úsalo en cada vuelta de un
 trabajo con referencia (ver `blender-model`) y describe las diferencias con estas medidas, no de memoria.
 Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista y sin

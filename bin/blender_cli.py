@@ -24,7 +24,10 @@ Uso (toda salida es JSON por stdout):
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
-  fit --reference ref.png --parts partes.json [--fit-view | --view front] [--budget 400] [--save x.blend]
+  fit --reference ref.png [--reference perfil.png ...] --parts partes.json
+      [--view right ... | --fit-view] [--budget 400] [--save x.blend]
+                                            (cada --view va con su --reference, en orden; las que falten
+                                            se buscan con --fit-view)
                                             ajusta escala y posición de las piezas hasta que la silueta
                                             se parezca a la de la referencia (lo más posible)
   build ... --patch ajuste.json             aplica location/scale por nombre (la salida `parts` de fit)
@@ -440,14 +443,36 @@ def cmd_render(a):
     return on_copy('render', {k: v for k, v in args.items() if v not in (None, False)}, a)
 
 
+def _vista(v):
+    return [float(x) for x in v.strip('[]').split(',')] if v and ',' in v else v
+
+
 def cmd_compare(a):
-    ref = os.path.abspath(a.reference)
+    refs, vistas = a.reference, a.view or []
+    if len(refs) > 1:
+        # varias referencias (p. ej. tres cuartos + perfil): una comparación por vista y el promedio
+        base, ext = os.path.splitext(os.path.abspath(a.path))
+        res = {'ok': True, 'views': []}
+        for i, r in enumerate(refs):
+            sub = argparse.Namespace(**vars(a))
+            sub.reference, sub.view = [r], [vistas[i]] if i < len(vistas) else []
+            sub.path = '%s_%d%s' % (base, i + 1, ext)
+            sub.fit_view = a.fit_view and i >= len(vistas)
+            one = cmd_compare(sub)
+            if not one.get('ok'):
+                return one
+            res['views'].append({'reference': os.path.abspath(r), 'image': one['image'],
+                                 'silhouetteIoU': one['alignment'].get('silhouetteIoU'),
+                                 'view': one.get('fitView', {}).get('view') or sub.view[:1], 'alignment': one['alignment']})
+        ious = [v['silhouetteIoU'] for v in res['views'] if v['silhouetteIoU'] is not None]
+        res['meanIoU'] = round(sum(ious) / len(ious), 3) if ious else None
+        return res
+    ref = os.path.abspath(refs[0])
     if not os.path.exists(ref):
         fail('No existe la referencia %s' % ref)
-    args = {'reference': ref, 'path': os.path.abspath(a.path), 'preview': a.preview, 'view': a.view,
+    view = vistas[0] if vistas else None
+    args = {'reference': ref, 'path': os.path.abspath(a.path), 'preview': a.preview, 'view': _vista(view),
             'engine': a.engine, 'samples': a.samples, 'camera': a.camera, 'frame': a.frame}
-    if a.view and ',' in a.view:
-        args['view'] = [float(x) for x in a.view.strip('[]').split(',')]
     if a.objects:
         args['objects'] = [x.strip() for x in a.objects.split(',')]
     args = {k: v for k, v in args.items() if v not in (None, False)}
@@ -468,11 +493,17 @@ def cmd_fit(a):
             parts = json.load(f)
     except (OSError, ValueError) as e:
         fail('No se pudo leer %s: %s' % (a.parts, e))
-    args = {'reference': os.path.abspath(a.reference), 'parts': parts, 'budget': a.budget}
+    vistas = a.view or []
+    refs = []
+    for i, r in enumerate(a.reference):
+        if not os.path.exists(r):
+            fail('No existe la referencia %s' % os.path.abspath(r))
+        v = _vista(vistas[i]) if i < len(vistas) else ('fit' if a.fit_view else None)
+        refs.append({'path': os.path.abspath(r), 'view': v})
+    args = {'references': refs, 'parts': parts, 'budget': a.budget, 'detail': a.detail,
+            'resolution': max(320, a.detail * 2)}
     if a.fit_view:
         args['fitView'] = True
-    elif a.view:
-        args['view'] = [float(x) for x in a.view.strip('[]').split(',')] if ',' in a.view else a.view
     return run('fit', args, a)
 
 
@@ -665,9 +696,9 @@ def main(argv):
     sp.add_argument('--path', required=True)
     sp.add_argument('--objects')
     sp = p('compare')
-    sp.add_argument('--reference', required=True)
+    sp.add_argument('--reference', required=True, action='append')
     sp.add_argument('--path', required=True)
-    sp.add_argument('--view')
+    sp.add_argument('--view', action='append')
     sp.add_argument('--objects')
     sp.add_argument('--camera')
     sp.add_argument('--engine')
@@ -679,11 +710,12 @@ def main(argv):
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
     sp = p('fit')
-    sp.add_argument('--reference', required=True)
+    sp.add_argument('--reference', required=True, action='append')
     sp.add_argument('--parts', required=True)
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
-    sp.add_argument('--view')
+    sp.add_argument('--view', action='append')
     sp.add_argument('--budget', type=int, default=400)
+    sp.add_argument('--detail', type=int, default=160)
     sp.add_argument('--save')
     sp = p('check')
     sp.add_argument('--objects')

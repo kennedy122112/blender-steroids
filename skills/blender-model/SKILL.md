@@ -142,9 +142,16 @@ de proporciones. Tarda 15-40 s.
   archivo y reconstruye con `blender-cli build -Spec escena.json -Patch salida-de-fit.json`: así el spec
   conserva el resultado y las calcomanías y piezas con `attach` se recolocan sobre las nuevas superficies.
 - **Verifica siempre** con `compare` aparte (a resolución completa), no te quedes con el número interno.
-- **Límite de una sola vista**: la silueta desde un ángulo mezcla ancho y profundidad. Un IoU ≥ 0.90
-  puede venir con piezas un 15-20 % más anchas o más hondas de lo real. Si el usuario tiene otra vista
-  (frente o perfil), compara también con ella; si no, díselo al entregar.
+- **Varias vistas**: repite `-Reference` y `-View` en orden (`-Reference tres-cuartos.png -Reference
+  perfil.png -View fit -View right`; `fit` busca esa vista). `fit` maximiza el promedio. Con una sola
+  vista oblicua el IoU puede pasar de 0.90 con las piezas grandes un 20 % más anchas o hondas de lo real
+  (ancho y profundidad se confunden); con tres cuartos + perfil, en la prueba a ciegas, el error del
+  cuerpo bajó de 21 % a 3 % y el de la cabeza de 11 % a 6 %. **Pide al usuario una segunda vista**
+  (frente o perfil) cuando las medidas importen; si no la hay, díselo al entregar.
+- **Límite de las piezas chicas**: lo que casi no cambia la silueta (alas pegadas al cuerpo, penachos,
+  patas debajo, detalles delante de otra pieza) no se recupera bien: en la prueba quedaron con 28-34 %
+  de error en sus medidas aunque la silueta coincidía. Ajústalas tú mirando la imagen, o deja fuera de
+  `-Parts` las que ya estén bien. `-Detail 320` (más resolución interna) no lo arregla.
 - No inventa piezas: ajusta las que hay. Si falta una forma de la referencia, agrégala antes.
 
 ### Revisar el armado (`check`)

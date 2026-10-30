@@ -1626,36 +1626,62 @@ def op_compare(args):
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
 
 
+def _parse_view(v):
+    if isinstance(v, str) and ',' in v:
+        return [float(x) for x in v.strip('[]').split(',')]
+    return v
+
+
 def op_fit(args):
     """Ajuste automático de proporciones: mueve y escala las piezas indicadas hasta que la silueta del
     render se parezca lo más posible a la de la referencia (IoU tras alinear las figuras).
 
-    args: reference, parts [{name, params ("sx sy sz x y z", por defecto todos), mirror (pieza espejo en
-    X), maxScale (1.6), maxMove (en metros, 25 % del tamaño de la figura)}], view o fitView, budget
-    (renders, 400). Deja las piezas en su mejor posición y devuelve los valores para el spec."""
+    Con varias referencias (`references`: [{path, view}], p. ej. tres cuartos + perfil) maximiza el
+    promedio: una sola vista oblicua confunde ancho con profundidad y la segunda lo resuelve.
+    `view` de cada referencia: front|back|left|right|top|iso, un vector, o «fit» para buscarla.
+
+    args: reference(s), parts [{name, params ("sx sy sz x y z"), mirror, maxScale (1.6), maxMove}],
+    view o fitView (para una sola referencia), budget (renders, 400), rounds, resolution (320)."""
     import tempfile
     s = _scene()
-    H = 160
-    ref_mask = _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400))
-    ref_c = _mask_crop(ref_mask, H)
-    if ref_c is None:
-        raise ValueError('No se detectó la figura en la referencia')
-    fit_info = None
-    if args.get('fitView'):
-        fit_info = _fit_view(args, ref_mask)
-        view = fit_info['view']
-        vistas = [dict(fit_info, round=1)]
-    else:
-        view = args.get('view') or 'front'
-        if isinstance(view, str) and ',' in view:
-            view = [float(x) for x in view.split(',')]
+    # alto de la silueta comparada: más alto = las piezas chicas pesan más (y cada render cuesta más)
+    H = int(args.get('detail', 160))
+    entrada = args.get('references') or [{'path': args['reference'], 'view': args.get('view')}]
+    refs = []
+    for r in entrada:
+        r = {'path': r} if isinstance(r, str) else dict(r)
+        mask = _subject_mask(_load_pixels(os.path.abspath(r['path']), 400))
+        crop = _mask_crop(mask, H)
+        if crop is None:
+            raise ValueError('No se detectó la figura en la referencia %s' % r['path'])
+        v = _parse_view(r.get('view'))
+        busca = v == 'fit' or (v is None and args.get('fitView'))
+        refs.append({'path': os.path.abspath(r['path']), 'mask': mask, 'c': crop,
+                     'view': v if not busca and v else 'front', 'fit': bool(busca), 'vistas': [], 'iou': None})
 
     guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
                 s.render.film_transparent, s.camera, s.render.filepath)
-    rh, rw = ref_mask.shape
     RES = int(args.get('resolution', 320))   # cuanto más cerca de la de compare, menos sorpresas
-    s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
-    s.render.resolution_percentage = 100
+
+    def formato(ref):
+        rh, rw = ref['mask'].shape
+        s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
+        s.render.resolution_percentage = 100
+
+    def buscar_vista(ref, azs=None, els=None):
+        formato(ref)
+        s.camera = guardado[5]
+        a_ = dict(args)
+        if azs:
+            a_['fitAzimuths'], a_['fitElevations'] = azs, els
+        info = _fit_view(a_, ref['mask'])
+        ref['view'] = info['view']
+        ref['vistas'].append(dict(info, round=len(ref['vistas']) + 1))
+
+    for ref in refs:
+        if ref['fit']:
+            buscar_vista(ref)
+
     _set_engine(s, 'workbench')
     s.render.film_transparent = True
     s.render.image_settings.file_format = 'PNG'
@@ -1665,12 +1691,18 @@ def op_fit(args):
     tmp = os.path.join(tempfile.mkdtemp(prefix='bs-fit-'), 'f.png')
 
     def medir():
+        """Promedio del IoU de silueta en todas las vistas de referencia."""
         bpy.context.view_layer.update()
-        frame_camera(cam, None, view)
-        s.render.filepath = tmp
-        bpy.ops.render.render(write_still=True)
-        m = _mask_crop(_load_pixels(tmp)[..., 3] > 0.5, H)
-        return _iou_aligned(ref_c, m) if m is not None else 0.0
+        total = 0.0
+        for ref in refs:
+            formato(ref)
+            frame_camera(cam, None, ref['view'])
+            s.render.filepath = tmp
+            bpy.ops.render.render(write_still=True)
+            m = _mask_crop(_load_pixels(tmp)[..., 3] > 0.5, H)
+            ref['iou'] = _iou_aligned(ref['c'], m) if m is not None else 0.0
+            total += ref['iou']
+        return total / len(refs)
 
     # variables: escala (multiplicador, en escala logarítmica) y desplazamiento de cada pieza
     figura = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
@@ -1680,11 +1712,10 @@ def op_fit(args):
         pd = {'name': pd} if isinstance(pd, str) else pd
         o = _obj(pd['name'])
         espejo = _obj(pd['mirror']) if pd.get('mirror') else None
-        base = {'o': o, 'loc': o.location.copy(), 'scale': o.scale.copy(), 'mirror': espejo,
-                'mloc': espejo.location.copy() if espejo else None, 'mscale': espejo.scale.copy() if espejo else None}
-        partes.append(base)
-        params = (pd.get('params') or 'sx sy sz x y z').split()
-        for q in params:
+        partes.append({'o': o, 'loc': o.location.copy(), 'scale': o.scale.copy(), 'mirror': espejo,
+                       'mloc': espejo.location.copy() if espejo else None,
+                       'mscale': espejo.scale.copy() if espejo else None})
+        for q in (pd.get('params') or 'sx sy sz x y z').split():
             es_escala = q.startswith('s')
             lim = math.log(float(pd.get('maxScale', 1.6))) if es_escala else float(pd.get('maxMove', radio * 0.25))
             vars_.append({'p': len(partes) - 1, 'q': q, 'v': 0.0, 'lim': lim,
@@ -1692,7 +1723,6 @@ def op_fit(args):
 
     def aplicar():
         for i, pt in enumerate(partes):
-            o = pt['o']
             sc, mv = [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]
             for v in vars_:
                 if v['p'] != i:
@@ -1702,17 +1732,18 @@ def op_fit(args):
                     sc[ax] = math.exp(v['v'])
                 else:
                     mv[ax] = v['v']
-            o.scale = Vector([pt['scale'][k] * sc[k] for k in range(3)])
-            o.location = pt['loc'] + Vector(mv)
+            pt['o'].scale = Vector([pt['scale'][k] * sc[k] for k in range(3)])
+            pt['o'].location = pt['loc'] + Vector(mv)
             if pt['mirror'] is not None:
                 pt['mirror'].scale = Vector([pt['mscale'][k] * sc[k] for k in range(3)])
                 pt['mirror'].location = pt['mloc'] + Vector((-mv[0], mv[1], mv[2]))
 
     presupuesto = int(args.get('budget', 400))
-    rondas = int(args.get('rounds', 3 if args.get('fitView') else 1))
+    alguna_busca = any(r['fit'] for r in refs)
+    rondas = int(args.get('rounds', 3 if alguna_busca else 1))
     paso0 = {id(v): v['step'] for v in vars_}
 
-    def buscar(limite):
+    def buscar(limite, r):
         """Búsqueda por coordenadas con pasos que se achican cuando una pasada no mejora."""
         nonlocal mejor, evals
         for v in vars_:
@@ -1747,26 +1778,25 @@ def op_fit(args):
     try:
         aplicar()
         inicio = mejor = medir()
+        inicio_por_vista = [round(r['iou'], 3) for r in refs]
         evals, historial = 1, [round(inicio, 4)]
         for r in range(rondas):
-            if r > 0 and args.get('fitView'):
+            if r > 0:
                 # con las proporciones ya ajustadas, la vista se distingue mejor: buscar cerca y en espejo
-                az, el = vistas[-1]['azimuth'], vistas[-1]['elevation']
-                azs = sorted({max(-85, min(85, a_)) for a_ in
-                              [az + d for d in (-10, -5, 0, 5, 10)] + [-az + d for d in (-10, -5, 0, 5, 10)]})
-                els = sorted({max(0.0, min(45.0, el + d)) for d in (-10.0, -5.0, 0.0, 5.0, 10.0)})
-                s.camera = guardado[5]
-                info = _fit_view(dict(args, fitAzimuths=azs, fitElevations=els), ref_mask)
+                for ref in refs:
+                    if not ref['fit']:
+                        continue
+                    az, el = ref['vistas'][-1]['azimuth'], ref['vistas'][-1]['elevation']
+                    azs = sorted({max(-85, min(85, a_)) for a_ in
+                                  [az + d for d in (-10, -5, 0, 5, 10)] + [-az + d for d in (-10, -5, 0, 5, 10)]})
+                    els = sorted({max(0.0, min(45.0, el + d)) for d in (-10.0, -5.0, 0.0, 5.0, 10.0)})
+                    buscar_vista(ref, azs, els)
                 s.camera = cam
                 _set_engine(s, 'workbench')
                 s.render.film_transparent = True
-                s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
-                s.render.resolution_percentage = 100
-                vistas.append(dict(info, round=r + 1))
-                view = info['view']
                 mejor = medir()
                 evals += 1
-            buscar(evals + (presupuesto - evals) // (rondas - r))
+            buscar(evals + (presupuesto - evals) // (rondas - r), r)
         aplicar()
         mejor = medir()
     finally:
@@ -1784,15 +1814,17 @@ def op_fit(args):
     for pt in partes:
         for o in [pt['o']] + ([pt['mirror']] if pt['mirror'] is not None else []):
             resultado[o.name] = {'location': r3(o.location), 'scale': r3(o.scale)}
-    out = {'iouStart': round(inicio, 3), 'iouEnd': round(mejor, 3), 'evals': evals, 'passes': historial,
-           'view': [round(x, 4) for x in view] if not isinstance(view, str) else view, 'parts': resultado,
-           'note': 'Escribe parts en el spec (location y scale de cada pieza) y vuelve a correr build: las '
-                   'calcomanías y lo colocado con attach se recolocan sobre las nuevas superficies.'}
-    if fit_info:
-        out['fitView'] = vistas[-1]
-        out['views'] = [{'round': v['round'], 'azimuth': v['azimuth'], 'elevation': v['elevation'],
-                         'iou': v['fitIoU']} for v in vistas]
-    return out
+    vistas = []
+    for ref, i0 in zip(refs, inicio_por_vista):
+        v = ref['view']
+        vistas.append({'reference': ref['path'], 'view': [round(x, 4) for x in v] if not isinstance(v, str) else v,
+                       'iouStart': i0, 'iouEnd': round(ref['iou'], 3),
+                       'search': [{'round': x['round'], 'azimuth': x['azimuth'], 'elevation': x['elevation']}
+                                  for x in ref['vistas']]})
+    return {'iouStart': round(inicio, 3), 'iouEnd': round(mejor, 3), 'evals': evals, 'passes': historial,
+            'references': vistas, 'parts': resultado,
+            'note': 'iou* es el promedio de las vistas. Escribe parts en el spec (location y scale) y vuelve a '
+                    'correr build (o build -Patch): las calcomanías y lo colocado con attach se recolocan.'}
 
 
 # ----------------------------------------------------------------------------------- revisión geométrica
