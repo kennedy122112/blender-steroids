@@ -322,6 +322,8 @@ def cmd_render(a):
     args = {'path': os.path.abspath(a.path), 'preview': a.preview, 'view': a.view, 'engine': a.engine,
             'samples': a.samples, 'percentage': a.percentage, 'camera': a.camera, 'frame': a.frame,
             'animation': a.animation}
+    if a.view and ',' in a.view:   # dirección propia: "0.9,-0.6,0.2"
+        args['view'] = [float(x) for x in a.view.strip('[]').split(',')]
     if a.resolution:
         args['resolution'] = [int(x) for x in re.split('[x,]', a.resolution)]
     if a.frames:

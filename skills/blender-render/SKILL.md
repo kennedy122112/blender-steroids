@@ -16,7 +16,7 @@ en segundo plano: **el Blender del usuario no se congela** y su archivo no cambi
 | Opción | Para qué |
 |---|---|
 | `-Preview` | Vista de revisión rápida: Workbench, 50 %, con sombras. Úsala para comprobar tu trabajo |
-| `-View iso\|front\|back\|right\|left\|top` | Cámara temporal que encuadra la escena desde ese lado (no queda en el archivo) |
+| `-View iso\|front\|back\|right\|left\|top` | Cámara temporal que encuadra la escena desde ese lado (no queda en el archivo). También una dirección propia: `-View "0.9,0.5,0.25"` (de dónde mira, p. ej. tres cuartos por detrás) |
 | `-Objects a,b` | Con `-View` o sin cámara: encuadra solo esos objetos |
 | `-Engine eevee\|cycles\|workbench` | EEVEE es rápido y bonito; Cycles, fotorrealista y lento |
 | `-Samples N` | Calidad: EEVEE 32-64 bastan; Cycles 128-512 (más = menos ruido, más tiempo) |

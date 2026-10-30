@@ -310,6 +310,8 @@ def build_mesh(o, name):
             bm.edges.new((vs[e[0]], vs[e[1]]))
         for f in o.get('faces', []):
             bm.faces.new([vs[i] for i in f])
+        # caras escritas a mano: orientarlas todas hacia afuera
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     else:
         bm.free()
         raise ValueError('Tipo de objeto desconocido: %s' % t)
@@ -615,6 +617,11 @@ def _apply_modifiers(o, specs, warnings):
             attr = _snake(k)
             if not hasattr(m, attr):
                 warnings.append('«%s»: el modificador %s no tiene «%s»' % (o.name, mtype, k))
+                continue
+            prop = m.bl_rna.properties[attr]
+            if prop.type == 'POINTER' and prop.fixed_type.identifier == 'Object':
+                # cualquier propiedad que apunta a un objeto (target del shrinkwrap, offset_object...)
+                setattr(m, attr, _obj(v) if v else None)
                 continue
             cur = getattr(m, attr)
             if isinstance(cur, float):

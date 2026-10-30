@@ -66,7 +66,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `torus` | `majorRadius`, `minorRadius`, `segments`, `minorSegments` |
 | `circle` | `radius`, `segments`, `fill` |
 | `monkey` | — |
-| `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida: perfiles, rampas, techos) |
+| `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida: perfiles, rampas, techos, tubos que siguen una curva, superelipsoides). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |
 | `light` | `light`: point/sun/spot/area, `energy` (W; sol: intensidad ~3-5), `color`, `size`, `spotSize`° , `spotBlend` |
 | `camera` | `lens` (mm), `ortho` + `orthoScale`, `focus` (objeto o distancia) + `fstop`, `active` (por defecto sí) |
@@ -88,7 +88,11 @@ en camelCase (`segments`, `width`, `levels`, `renderLevels`, `thickness`, `count
 Atajos: `bevel` (`width`, `segments`), `subsurf`/`subdivision` (`levels`), `solidify` (`thickness`),
 `array` (`count`, `offset` relativo `[x,y,z]` o `constantOffset` en metros), `mirror` (`axis`: "X", "XY"…,
 `mirrorObject`), `boolean` (`object`, `operation`: difference/union/intersect), `weld`, `triangulate`,
-`displace`, `wireframe`, `screw`, `simple_deform`. Si una propiedad no existe, sale en `warnings`.
+`displace`, `wireframe`, `screw`, `simple_deform`, `shrinkwrap` (`target`, `wrapMethod`, `offset`).
+Toda propiedad que apunta a un objeto acepta su nombre (`target`, `offsetObject`…). Si una propiedad no existe, sale en `warnings`.
+**Pintura sobre una superficie curva** (ojos, logos, manchas): una esfera aplanada (`scale` con un eje
+~0.002) con `shrinkwrap` → `target` la pieza, `wrapMethod: "nearest_surfacepoint"` y un `offset` algo
+mayor en cada capa (0.0012, 0.0024…), así quedan pegadas y se apilan sin parpadeos.
 Al repetir `build`, los modificadores que ya no estén en el spec se quitan (solo los que puso `build`).
 
 ### Materiales
