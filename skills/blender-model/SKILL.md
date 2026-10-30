@@ -45,7 +45,8 @@ lejos si no lees la referencia antes. Ve en este orden.
 5. **Lista de control** en cada vuelta: `blender-cli check` (abajo) para piezas flotando, enterradas
    o atravesadas; mira también `-View back` y `right`; proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
    `"look": "AgX - Punchy"`), legibilidad de la cara, nada tapado por la cámara.
-6. **Corrige con medidas, una cosa por vuelta.** Usa `widthByGuide*`, `zByGuide` y `edgesByGuide` de
+6. **Cuando las piezas estén y solo falten proporciones, usa `fit`** (abajo) en vez de ajustar a mano.
+   Para lo demás, **corrige con medidas, una cosa por vuelta.** Usa `widthByGuide*`, `zByGuide` y `edgesByGuide` de
    `compare`: si en la guía 4 la referencia mide 0.65 y el render 0.50, esa guía está a z 0.44 m y su
    borde derecho es `MangaD`, la pieza a cambiar es esa (no la que sospeches). Anota el `silhouetteIoU` de cada vuelta: si sube, la
    vuelta sirvió; si baja, deshaz ese cambio.
@@ -126,6 +127,25 @@ Comunes a todos: `location` [m], `rotation` [grados XYZ], `scale`, `dimensions` 
 `materials` + `faceMaterials` (índice por cara), `collection`, `parent` (la `location` que das es la del
 mundo), `smooth`, `hidden`, `hideRender`, `display` (wire, solid…), `lookAt` (objeto o `[x,y,z]`;
 con `track: true` lo sigue siempre), `cutter: true` (pieza para restar: alámbrica y fuera del render).
+
+### Ajuste automático de proporciones (`fit`)
+Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no
+ajustes número por número: `blender-cli fit -Reference ref.png -Parts partes.json -FitView [-Budget 600]`
+mueve y escala las piezas que indiques (cientos de renders rápidos de silueta) hasta que la silueta del
+render se parezca lo más posible a la de la referencia, alternando la búsqueda del ángulo de cámara y la
+de proporciones. Tarda 15-40 s.
+- `partes.json`: `[{"name": "Cuerpo"}, {"name": "AlaI", "mirror": "AlaD"}, {"name": "Sombrero",
+  "params": "sx sz z", "maxScale": 1.4, "maxMove": 0.1}]`. Por defecto ajusta `sx sy sz x y z`;
+  `mirror` mueve la pareja en espejo. Pon solo las piezas grandes que hacen la silueta, con su origen
+  en su centro (primitivas con `location`), no tubos ni membranas en coordenadas del mundo.
+- Devuelve `iouStart` → `iouEnd` y `parts` (location y scale de cada pieza). Guarda la salida en un
+  archivo y reconstruye con `blender-cli build -Spec escena.json -Patch salida-de-fit.json`: así el spec
+  conserva el resultado y las calcomanías y piezas con `attach` se recolocan sobre las nuevas superficies.
+- **Verifica siempre** con `compare` aparte (a resolución completa), no te quedes con el número interno.
+- **Límite de una sola vista**: la silueta desde un ángulo mezcla ancho y profundidad. Un IoU ≥ 0.90
+  puede venir con piezas un 15-20 % más anchas o más hondas de lo real. Si el usuario tiene otra vista
+  (frente o perfil), compara también con ella; si no, díselo al entregar.
+- No inventa piezas: ajusta las que hay. Si falta una forma de la referencia, agrégala antes.
 
 ### Revisar el armado (`check`)
 `blender-cli check [-Objects a,b] [-Tolerance 0.004]` revisa las mallas visibles en el render (con sus

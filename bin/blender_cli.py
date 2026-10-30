@@ -24,6 +24,10 @@ Uso (toda salida es JSON por stdout):
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
+  fit --reference ref.png --parts partes.json [--fit-view | --view front] [--budget 400] [--save x.blend]
+                                            ajusta escala y posición de las piezas hasta que la silueta
+                                            se parezca a la de la referencia (lo más posible)
+  build ... --patch ajuste.json             aplica location/scale por nombre (la salida `parts` de fit)
 
 Con --file la orden se aplica a ese .blend sin interfaz (si no existe, se crea vacío y --save
 lo guarda ahí). render y export, en vivo, trabajan sobre una copia: no congelan tu Blender.
@@ -272,7 +276,7 @@ def run(cmd, args, a, live_only=False):
     if resp is None:
         not_connected()
     resp['mode'] = 'live'
-    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec'):
+    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec', 'fit'):
         sv = live('save', {'path': a.save})
         resp['saved'] = sv.get('saved') if sv and sv.get('ok') else sv
     return resp
@@ -396,6 +400,17 @@ def cmd_spec_build(a):
     except ValueError as e:
         fail('El spec %s no es JSON válido: %s' % (a.spec, e))
     spec['_baseDir'] = os.path.dirname(os.path.abspath(a.spec))
+    if getattr(a, 'patch', None):
+        # resultado de fit: location/scale por nombre de pieza, sobre el spec
+        try:
+            with open(a.patch, encoding='utf-8-sig') as f:
+                patch = json.load(f)
+        except (OSError, ValueError) as e:
+            fail('No se pudo leer el patch %s: %s' % (a.patch, e))
+        patch = patch.get('parts', patch)
+        for o in spec.get('objects', []):
+            if o.get('name') in patch:
+                o.update({k: v for k, v in patch[o['name']].items() if k in ('location', 'scale')})
     return run('build', spec, a)
 
 
@@ -445,6 +460,20 @@ def cmd_compare(a):
     if a.fit_view:
         args['fitView'] = True
     return on_copy('compare', args, a)
+
+
+def cmd_fit(a):
+    try:
+        with open(a.parts, encoding='utf-8-sig') as f:
+            parts = json.load(f)
+    except (OSError, ValueError) as e:
+        fail('No se pudo leer %s: %s' % (a.parts, e))
+    args = {'reference': os.path.abspath(a.reference), 'parts': parts, 'budget': a.budget}
+    if a.fit_view:
+        args['fitView'] = True
+    elif a.view:
+        args['view'] = [float(x) for x in a.view.strip('[]').split(',')] if ',' in a.view else a.view
+    return run('fit', args, a)
 
 
 def cmd_check(a):
@@ -610,6 +639,7 @@ def main(argv):
     sp = p('build')
     sp.add_argument('--spec', required=True)
     sp.add_argument('--save')
+    sp.add_argument('--patch')
     sp = p('exec')
     sp.add_argument('--script', required=True)
     sp.add_argument('--save')
@@ -648,6 +678,13 @@ def main(argv):
     sp.add_argument('--no-align', '--noalign', dest='no_align', action='store_true')
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
+    sp = p('fit')
+    sp.add_argument('--reference', required=True)
+    sp.add_argument('--parts', required=True)
+    sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
+    sp.add_argument('--view')
+    sp.add_argument('--budget', type=int, default=400)
+    sp.add_argument('--save')
     sp = p('check')
     sp.add_argument('--objects')
     sp.add_argument('--tolerance', type=float, default=0.004)
@@ -684,6 +721,8 @@ def main(argv):
         res = cmd_compare(a)
     elif a.cmd == 'check':
         res = cmd_check(a)
+    elif a.cmd == 'fit':
+        res = cmd_fit(a)
     else:
         res = cmd_export(a)
     out(res, 0 if res.get('ok') else 1)

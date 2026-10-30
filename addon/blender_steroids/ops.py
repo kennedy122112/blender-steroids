@@ -1626,6 +1626,175 @@ def op_compare(args):
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
 
 
+def op_fit(args):
+    """Ajuste automático de proporciones: mueve y escala las piezas indicadas hasta que la silueta del
+    render se parezca lo más posible a la de la referencia (IoU tras alinear las figuras).
+
+    args: reference, parts [{name, params ("sx sy sz x y z", por defecto todos), mirror (pieza espejo en
+    X), maxScale (1.6), maxMove (en metros, 25 % del tamaño de la figura)}], view o fitView, budget
+    (renders, 400). Deja las piezas en su mejor posición y devuelve los valores para el spec."""
+    import tempfile
+    s = _scene()
+    H = 160
+    ref_mask = _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400))
+    ref_c = _mask_crop(ref_mask, H)
+    if ref_c is None:
+        raise ValueError('No se detectó la figura en la referencia')
+    fit_info = None
+    if args.get('fitView'):
+        fit_info = _fit_view(args, ref_mask)
+        view = fit_info['view']
+        vistas = [dict(fit_info, round=1)]
+    else:
+        view = args.get('view') or 'front'
+        if isinstance(view, str) and ',' in view:
+            view = [float(x) for x in view.split(',')]
+
+    guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
+                s.render.film_transparent, s.camera, s.render.filepath)
+    rh, rw = ref_mask.shape
+    RES = int(args.get('resolution', 320))   # cuanto más cerca de la de compare, menos sorpresas
+    s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
+    s.render.resolution_percentage = 100
+    _set_engine(s, 'workbench')
+    s.render.film_transparent = True
+    s.render.image_settings.file_format = 'PNG'
+    cam = bpy.data.objects.new('bs_fitcam', bpy.data.cameras.new('bs_fitcam'))
+    s.collection.objects.link(cam)
+    s.camera = cam
+    tmp = os.path.join(tempfile.mkdtemp(prefix='bs-fit-'), 'f.png')
+
+    def medir():
+        bpy.context.view_layer.update()
+        frame_camera(cam, None, view)
+        s.render.filepath = tmp
+        bpy.ops.render.render(write_still=True)
+        m = _mask_crop(_load_pixels(tmp)[..., 3] > 0.5, H)
+        return _iou_aligned(ref_c, m) if m is not None else 0.0
+
+    # variables: escala (multiplicador, en escala logarítmica) y desplazamiento de cada pieza
+    figura = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
+    _, radio = _bounds(figura)
+    partes, vars_ = [], []
+    for pd in args['parts']:
+        pd = {'name': pd} if isinstance(pd, str) else pd
+        o = _obj(pd['name'])
+        espejo = _obj(pd['mirror']) if pd.get('mirror') else None
+        base = {'o': o, 'loc': o.location.copy(), 'scale': o.scale.copy(), 'mirror': espejo,
+                'mloc': espejo.location.copy() if espejo else None, 'mscale': espejo.scale.copy() if espejo else None}
+        partes.append(base)
+        params = (pd.get('params') or 'sx sy sz x y z').split()
+        for q in params:
+            es_escala = q.startswith('s')
+            lim = math.log(float(pd.get('maxScale', 1.6))) if es_escala else float(pd.get('maxMove', radio * 0.25))
+            vars_.append({'p': len(partes) - 1, 'q': q, 'v': 0.0, 'lim': lim,
+                          'step': 0.18 if es_escala else radio * 0.06})
+
+    def aplicar():
+        for i, pt in enumerate(partes):
+            o = pt['o']
+            sc, mv = [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]
+            for v in vars_:
+                if v['p'] != i:
+                    continue
+                ax = 'xyz'.index(v['q'][-1])
+                if v['q'].startswith('s'):
+                    sc[ax] = math.exp(v['v'])
+                else:
+                    mv[ax] = v['v']
+            o.scale = Vector([pt['scale'][k] * sc[k] for k in range(3)])
+            o.location = pt['loc'] + Vector(mv)
+            if pt['mirror'] is not None:
+                pt['mirror'].scale = Vector([pt['mscale'][k] * sc[k] for k in range(3)])
+                pt['mirror'].location = pt['mloc'] + Vector((-mv[0], mv[1], mv[2]))
+
+    presupuesto = int(args.get('budget', 400))
+    rondas = int(args.get('rounds', 3 if args.get('fitView') else 1))
+    paso0 = {id(v): v['step'] for v in vars_}
+
+    def buscar(limite):
+        """Búsqueda por coordenadas con pasos que se achican cuando una pasada no mejora."""
+        nonlocal mejor, evals
+        for v in vars_:
+            v['step'] = paso0[id(v)] * (0.5 if r > 0 else 1.0)
+        while evals < limite:
+            mejoro = False
+            for v in vars_:
+                if evals >= limite:
+                    break
+                for signo in (1, -1):
+                    viejo = v['v']
+                    v['v'] = max(-v['lim'], min(v['lim'], viejo + signo * v['step']))
+                    if v['v'] == viejo:
+                        continue
+                    aplicar()
+                    val = medir()
+                    evals += 1
+                    if val > mejor + 1e-4:
+                        mejor, mejoro = val, True
+                        break
+                    v['v'] = viejo
+                    aplicar()
+                    if evals >= limite:
+                        break
+            historial.append(round(mejor, 4))
+            if not mejoro:
+                for v in vars_:
+                    v['step'] *= 0.5
+                if all(v['step'] < (0.01 if v['q'].startswith('s') else radio * 0.003) for v in vars_):
+                    break
+
+    try:
+        aplicar()
+        inicio = mejor = medir()
+        evals, historial = 1, [round(inicio, 4)]
+        for r in range(rondas):
+            if r > 0 and args.get('fitView'):
+                # con las proporciones ya ajustadas, la vista se distingue mejor: buscar cerca y en espejo
+                az, el = vistas[-1]['azimuth'], vistas[-1]['elevation']
+                azs = sorted({max(-85, min(85, a_)) for a_ in
+                              [az + d for d in (-10, -5, 0, 5, 10)] + [-az + d for d in (-10, -5, 0, 5, 10)]})
+                els = sorted({max(0.0, min(45.0, el + d)) for d in (-10.0, -5.0, 0.0, 5.0, 10.0)})
+                s.camera = guardado[5]
+                info = _fit_view(dict(args, fitAzimuths=azs, fitElevations=els), ref_mask)
+                s.camera = cam
+                _set_engine(s, 'workbench')
+                s.render.film_transparent = True
+                s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
+                s.render.resolution_percentage = 100
+                vistas.append(dict(info, round=r + 1))
+                view = info['view']
+                mejor = medir()
+                evals += 1
+            buscar(evals + (presupuesto - evals) // (rondas - r))
+        aplicar()
+        mejor = medir()
+    finally:
+        bpy.data.objects.remove(cam, do_unlink=True)
+        (eng, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
+         s.render.film_transparent, s.camera, s.render.filepath) = guardado
+        s.render.engine = eng
+    if not bpy.app.background:
+        try:
+            with _ctx():
+                bpy.ops.ed.undo_push(message='blender-steroids: fit')
+        except Exception:
+            pass
+    resultado = {}
+    for pt in partes:
+        for o in [pt['o']] + ([pt['mirror']] if pt['mirror'] is not None else []):
+            resultado[o.name] = {'location': r3(o.location), 'scale': r3(o.scale)}
+    out = {'iouStart': round(inicio, 3), 'iouEnd': round(mejor, 3), 'evals': evals, 'passes': historial,
+           'view': [round(x, 4) for x in view] if not isinstance(view, str) else view, 'parts': resultado,
+           'note': 'Escribe parts en el spec (location y scale de cada pieza) y vuelve a correr build: las '
+                   'calcomanías y lo colocado con attach se recolocan sobre las nuevas superficies.'}
+    if fit_info:
+        out['fitView'] = vistas[-1]
+        out['views'] = [{'round': v['round'], 'azimuth': v['azimuth'], 'elevation': v['elevation'],
+                         'iou': v['fitIoU']} for v in vistas]
+    return out
+
+
 # ----------------------------------------------------------------------------------- revisión geométrica
 
 def _world_bvh(o, dg):
@@ -1794,6 +1963,7 @@ OPS = {
     'compare': op_compare,
     'compose': op_compose,
     'check': op_check,
+    'fit': op_fit,
 }
 
 

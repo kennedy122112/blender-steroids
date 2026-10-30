@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.5.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.6.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -192,6 +192,8 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
 | `compare -Reference ref.png -Path c.png [-FitView]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
+| `fit -Reference ref.png -Parts partes.json -FitView` | Ajusta escala y posición de las piezas hasta que la silueta coincida con la referencia |
+| `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
 El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces) y [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`).
