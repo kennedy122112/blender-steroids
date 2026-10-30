@@ -29,10 +29,19 @@ Avisa el tiempo antes de un render largo (Cycles a 1080p con 256 muestras puede 
 
 ## Comparar con una referencia
 `blender-cli compare -Reference ref.png -Path comparar.png [-View front|...] [-Objects a,b] [-Camera n] [-Preview]`
-renderiza con el mismo formato (proporción) que la referencia y entrega una sola imagen: referencia a
-la izquierda, render a la derecha, a la misma altura y con guías horizontales cada 10 % (`-NoGuides`
-las quita). Deja también el render solo (`render` en la respuesta). Úsalo en cada vuelta de un
-trabajo con referencia (ver `blender-model`) y describe las diferencias por guía, no de memoria.
+renderiza con fondo transparente y el formato de la referencia, detecta la figura en las dos imágenes
+(en la referencia la separa del fondo, también de un visor con degradado y cuadrícula) y **alinea** el
+render: misma altura de figura, centrado y apoyado en la misma base. Entrega una imagen con tres
+paneles: referencia | render alineado | siluetas superpuestas (cian = referencia, magenta = render),
+con guías cada 10 % del alto de la figura. Y medidas en `alignment`:
+- `silhouetteIoU` (0-1): cuánto coinciden las siluetas; sirve para ver si una vuelta mejoró.
+- `aspectReference` / `aspectRender`: ancho/alto de la figura.
+- `widthByGuideReference` / `widthByGuideRender`: ancho de la figura en cada décimo de su alto, de
+  abajo arriba, en fracción del alto. Compáralos guía a guía: «en la 7 la referencia mide 0.61 y el render 0.54».
+
+`-NoAlign` (sin alinear), `-NoOverlay` (sin panel de siluetas), `-NoGuides`. Úsalo en cada vuelta de un
+trabajo con referencia (ver `blender-model`) y describe las diferencias con estas medidas, no de memoria.
+Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista.
 
 ## Animación
 `blender-cli render -Path carpeta/toma.png -Animation [-Frames 1-120]` deja `toma_0001.png`,

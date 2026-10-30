@@ -42,8 +42,8 @@ lejos si no lees la referencia antes. Ve en este orden.
    [-View front]` renderiza con el formato de la referencia y pone las dos imágenes lado a lado con
    guías horizontales cada 10 % del alto. Léela y anota diferencias concretas («la cabeza llega a la
    guía 3 en la referencia y a la 4 en el render»). Usa la vista que coincida con la de la referencia.
-5. **Lista de control** en cada vuelta: piezas flotando o atravesadas (mira también `-View back` y
-   `right`), proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
+5. **Lista de control** en cada vuelta: `blender-cli check` (abajo) para piezas flotando, enterradas
+   o atravesadas; mira también `-View back` y `right`; proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
    `"look": "AgX - Punchy"`), legibilidad de la cara, nada tapado por la cámara.
 6. Repite 4-5 hasta que las diferencias sean de detalle, y dile al usuario cuáles quedan.
 
@@ -117,6 +117,16 @@ Comunes a todos: `location` [m], `rotation` [grados XYZ], `scale`, `dimensions` 
 `materials` + `faceMaterials` (índice por cara), `collection`, `parent` (la `location` que das es la del
 mundo), `smooth`, `hidden`, `hideRender`, `display` (wire, solid…), `lookAt` (objeto o `[x,y,z]`;
 con `track: true` lo sigue siempre), `cutter: true` (pieza para restar: alámbrica y fuera del render).
+
+### Revisar el armado (`check`)
+`blender-cli check [-Objects a,b] [-Tolerance 0.004]` revisa las mallas visibles en el render (con sus
+modificadores) y devuelve:
+- `floating`: piezas que no tocan nada (garras despegadas, ojos sueltos). Casi siempre es un error.
+- `buried`: piezas al menos 90 % dentro de otra; no se ven (una correa metida en el abrigo).
+- `intersecting`: pares que se cruzan, con qué fracción de cada uno queda dentro del otro. Muchas son
+  uniones a propósito (orejas en la cabeza, manos en las mangas); fíjate en las que deberían ir **por
+  fuera** (un bastón que atraviesa el abrigo, una mano que entra en la cara) y en fracciones altas.
+Las calcomanías se ignoran en los cruces. Ejecútalo después de cada `build` grande y antes del render final.
 
 ### Colocar sobre superficies (`attach`, `onSurface`)
 No calcules a ojo dónde queda la superficie de una pieza curva: deja que blender-cli la encuentre.

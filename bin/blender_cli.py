@@ -19,9 +19,11 @@ Uso (toda salida es JSON por stdout):
          [--samples N] [--resolution 1920x1080] [--percentage 50] [--camera nombre] [--frame N]
          [--animation [--frames 1-120]] [--transparent]
   export --path modelo.glb|fbx|obj|stl|ply|usd [--objects a,b]
-  compare --reference ref.png --path lado-a-lado.png [--view front|...] [--objects a,b] [--preview] ...
-                                            render con el formato de la referencia, puesto a su lado con
-                                            guías cada 10 % de alto para comparar proporciones
+  compare --reference ref.png --path comparar.png [--view front|...] [--objects a,b] [--preview]
+          [--no-align] [--no-overlay] [--no-guides]
+                                            referencia | render alineado a su figura | siluetas
+                                            superpuestas, con guías cada 10 % y medidas (IoU, anchos)
+  check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
 
 Con --file la orden se aplica a ese .blend sin interfaz (si no existe, se crea vacío y --save
 lo guarda ahí). render y export, en vivo, trabajan sobre una copia: no congelan tu Blender.
@@ -436,7 +438,18 @@ def cmd_compare(a):
     args = {k: v for k, v in args.items() if v not in (None, False)}
     if a.no_guides:
         args['guides'] = False
+    if a.no_align:
+        args['align'] = False
+    if a.no_overlay:
+        args['overlay'] = False
     return on_copy('compare', args, a)
+
+
+def cmd_check(a):
+    args = {'tolerance': a.tolerance}
+    if a.objects:
+        args['objects'] = [x.strip() for x in a.objects.split(',')]
+    return run('check', args, a)
 
 
 def cmd_export(a):
@@ -630,6 +643,11 @@ def main(argv):
     sp.add_argument('--frame', type=int)
     sp.add_argument('--preview', action='store_true')
     sp.add_argument('--no-guides', '--noguides', dest='no_guides', action='store_true')
+    sp.add_argument('--no-align', '--noalign', dest='no_align', action='store_true')
+    sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
+    sp = p('check')
+    sp.add_argument('--objects')
+    sp.add_argument('--tolerance', type=float, default=0.004)
     a = ap.parse_args(argv)
     w = copy_warning()
     if w and a.cmd != 'doctor':
@@ -661,6 +679,8 @@ def main(argv):
         res = cmd_render(a)
     elif a.cmd == 'compare':
         res = cmd_compare(a)
+    elif a.cmd == 'check':
+        res = cmd_check(a)
     else:
         res = cmd_export(a)
     out(res, 0 if res.get('ok') else 1)

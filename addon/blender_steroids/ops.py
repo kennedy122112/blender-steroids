@@ -1215,49 +1215,176 @@ def op_render(args):
             'size': [int(s.render.resolution_x * pct), int(s.render.resolution_y * pct)]}
 
 
-def op_compose(args):
-    """Pone la referencia y el render lado a lado, a la misma altura, con guías horizontales cada 10 %
-    para comparar proporciones. El fondo transparente de la referencia se rellena de blanco."""
+def _load_pixels(path, h=None):
+    """Imagen como array (alto, ancho, 4) de abajo arriba, opcionalmente escalada a la altura h."""
     import numpy as np
-
-    def cargar(path, h):
-        im = bpy.data.images.load(path, check_existing=False)
-        w0, h0 = im.size
-        if h0 == 0:
-            raise ValueError('No se pudo leer la imagen %s' % path)
-        im.scale(max(1, round(w0 * h / h0)), h)
-        w = im.size[0]
-        px = np.empty(w * h * 4, dtype=np.float32)
-        im.pixels.foreach_get(px)
+    im = bpy.data.images.load(path, check_existing=False)
+    w0, h0 = im.size
+    if h0 == 0:
         bpy.data.images.remove(im)
-        px = px.reshape(h, w, 4)
-        a = px[..., 3:4]
-        px[..., :3] = px[..., :3] * a + (1 - a)
-        px[..., 3] = 1
-        return px
+        raise ValueError('No se pudo leer la imagen %s' % path)
+    if h and h != h0:
+        im.scale(max(1, round(w0 * h / h0)), h)
+    w, hh = im.size
+    px = np.empty(w * hh * 4, dtype=np.float32)
+    im.pixels.foreach_get(px)
+    bpy.data.images.remove(im)
+    return px.reshape(hh, w, 4)
 
+
+def _resize(px, w, h):
+    """Escala un array de imagen usando Blender (sin dependencias)."""
+    import numpy as np
+    im = bpy.data.images.new('bs_tmp', px.shape[1], px.shape[0], alpha=True, float_buffer=True)
+    im.pixels.foreach_set(px.ravel())
+    im.scale(max(1, w), max(1, h))
+    nw, nh = im.size
+    out = np.empty(nw * nh * 4, dtype=np.float32)
+    im.pixels.foreach_get(out)
+    bpy.data.images.remove(im)
+    return out.reshape(nh, nw, 4)
+
+
+def _subject_mask(px):
+    """Figura de la referencia: lo que se aparta del color de fondo (la mediana del borde), sin líneas
+    sueltas (cuadrícula del visor, gizmos): solo filas y columnas con suficiente figura."""
+    import numpy as np
+    if px[..., 3].min() < 0.5:                     # imagen con transparencia: el alfa ya es la figura
+        return _fill_rows(px[..., 3] > 0.5)
+    h, w = px.shape[:2]
+    # fondo por fila (los visores y estudios suelen tener degradado vertical): mediana de los bordes
+    b = max(4, w // 40)
+    borde = np.concatenate([px[:, :b, :3], px[:, -b:, :3]], axis=1)
+    fondo = np.median(borde, axis=1)                                   # (h, 3)
+    ruido = np.abs(borde - fondo[:, None]).max(axis=2)
+    m = np.abs(px[..., :3] - fondo[:, None]).max(axis=2) > max(0.035, float(np.percentile(ruido, 95)) * 1.5)
+    # fuera las líneas sueltas (cuadrícula, gizmos): solo filas y columnas con bastante figura
+    filas = m.sum(axis=1) > 0.06 * w
+    cols = m.sum(axis=0) > 0.06 * h
+    return _fill_rows(m & filas[:, None] & cols[None, :])
+
+
+def _fill_rows(m):
+    """Silueta llena: en cada fila, de la primera a la última columna de figura (tapa los huecos que
+    dejan las zonas del mismo color que el fondo)."""
+    import numpy as np
+    out = np.zeros_like(m)
+    salto = max(3, int(0.06 * m.shape[1]))          # huecos mayores separan la figura de líneas sueltas
+    for y in np.nonzero(m.any(axis=1))[0]:
+        xs = np.nonzero(m[y])[0]
+        cortes = np.nonzero(np.diff(xs) > salto)[0]
+        tramos = np.split(xs, cortes + 1)
+        mayor = max(tramos, key=len)                # la figura es el tramo con más píxeles de la fila
+        out[y, mayor[0]:mayor[-1] + 1] = True
+    return out
+
+
+def _bbox(mask):
+    import numpy as np
+    ys, xs = np.nonzero(mask)
+    if len(ys) == 0:
+        return None
+    # recorte del 0.5 % para no depender de un píxel suelto
+    return (int(np.percentile(xs, 0.5)), int(np.percentile(ys, 0.5)),
+            int(np.percentile(xs, 99.5)), int(np.percentile(ys, 99.5)))
+
+
+def _edges(mask):
+    import numpy as np
+    e = np.zeros_like(mask)
+    e[1:-1, 1:-1] = mask[1:-1, 1:-1] & ~(mask[:-2, 1:-1] & mask[2:, 1:-1] & mask[1:-1, :-2] & mask[1:-1, 2:])
+    return e | np.roll(e, 1, 0) | np.roll(e, 1, 1)
+
+
+def op_compose(args):
+    """Referencia | render alineado | siluetas superpuestas, con guías cada 10 % del alto de la figura.
+    El render se escala y se mueve para que su figura ocupe la misma caja que la de la referencia
+    (alto igual, centrada en x, apoyada en la misma base). Devuelve medidas para comparar sin adivinar."""
+    import numpy as np
     h = int(args.get('height', 800))
-    ref, ren = cargar(args['reference'], h), cargar(args['render'], h)
+    ref = _load_pixels(args['reference'], h)
+    ren = _load_pixels(args['render'])
+    rmask = _subject_mask(ref)
+    rb = _bbox(rmask)
+    gmask_full = ren[..., 3] > 0.5
+    gb = _bbox(gmask_full)
+    info = {}
+    if args.get('align', True) and rb and gb:
+        k = (rb[3] - rb[1] + 1) / (gb[3] - gb[1] + 1)
+        ren = _resize(ren, round(ren.shape[1] * k), round(ren.shape[0] * k))
+        gmask_full = ren[..., 3] > 0.5
+        gb = _bbox(gmask_full)
+        canvas = np.zeros((h, ref.shape[1], 4), dtype=np.float32)
+        dx = round((rb[0] + rb[2]) / 2 - (gb[0] + gb[2]) / 2)
+        dy = rb[1] - gb[1]                              # misma base (filas de abajo arriba)
+        ys, xs = slice(max(0, dy), min(h, ren.shape[0] + dy)), slice(max(0, dx), min(ref.shape[1], ren.shape[1] + dx))
+        canvas[ys, xs] = ren[ys.start - dy:ys.stop - dy, xs.start - dx:xs.stop - dx]
+        ren = canvas
+        info['scale'] = round(k, 3)
+    elif ren.shape[0] != h:
+        ren = _resize(ren, round(ren.shape[1] * h / ren.shape[0]), h)
+    gmask = ren[..., 3] > 0.5
+    gb = _bbox(gmask)
+    # el render va sobre gris medio; la referencia, si era transparente, sobre blanco
+    a = ren[..., 3:4]
+    ren[..., :3] = ren[..., :3] * a + 0.35 * (1 - a)
+    ren[..., 3] = 1
+    ra = ref[..., 3:4]
+    ref[..., :3] = ref[..., :3] * ra + (1 - ra)
+    ref[..., 3] = 1
+
+    paneles = [ref, ren]
+    if args.get('overlay', True) and rb and gb:
+        ov = ref.copy()
+        ov[..., :3] = ov[..., :3] * 0.45 + 0.3
+        ov[_edges(rmask), :3] = (0.0, 0.85, 1.0)      # cian: referencia
+        ov[_edges(gmask), :3] = (1.0, 0.2, 0.75)      # magenta: render
+        paneles.append(ov)
     gap = 12
-    canvas = np.full((h, ref.shape[1] + gap + ren.shape[1], 4), 0.5, dtype=np.float32)
+    W = sum(p.shape[1] for p in paneles) + gap * (len(paneles) - 1)
+    canvas = np.full((h, W, 4), 0.5, dtype=np.float32)
     canvas[..., 3] = 1
-    canvas[:, :ref.shape[1]] = ref
-    canvas[:, ref.shape[1] + gap:] = ren
+    x = 0
+    for p_ in paneles:
+        canvas[:, x:x + p_.shape[1]] = p_
+        x += p_.shape[1] + gap
     if args.get('guides', True):
-        for k in range(1, 10):
-            y = int(h * k / 10)
+        # guías cada 10 % del alto de la figura de la referencia (o de la imagen, si no se detectó)
+        y0, y1 = (rb[1], rb[3]) if rb else (0, h - 1)
+        for k in range(0, 11):
+            y = int(y1 - (y1 - y0) * k / 10)
             canvas[y, :, :3] = canvas[y, :, :3] * 0.4 + np.array([0.0, 0.75, 1.0]) * 0.6
     out = os.path.abspath(args['path'])
-    img = bpy.data.images.new('bs_compare', canvas.shape[1], h, alpha=False)
+    img = bpy.data.images.new('bs_compare', W, h, alpha=False)
     img.pixels.foreach_set(canvas.ravel())
     img.filepath_raw = out
     img.file_format = 'PNG'
     img.save()
-    return {'image': out, 'size': [canvas.shape[1], h], 'left': 'referencia', 'right': 'render'}
+    bpy.data.images.remove(img)
+
+    res = {'image': out, 'size': [W, h], 'panels': ['referencia', 'render', 'siluetas'][:len(paneles)]}
+    if rb and gb:
+        rw_, rh_ = rb[2] - rb[0] + 1, rb[3] - rb[1] + 1
+        gw_, gh_ = gb[2] - gb[0] + 1, gb[3] - gb[1] + 1
+        inter = (rmask & gmask).sum()
+        union = (rmask | gmask).sum()
+        info.update({
+            'aspectReference': round(rw_ / rh_, 3), 'aspectRender': round(gw_ / gh_, 3),
+            'silhouetteIoU': round(float(inter / union), 3) if union else None,
+            # ancho de la figura cada 10 % del alto (de abajo arriba), en fracción del alto
+            'widthByGuideReference': [round(float(rmask[int(rb[1] + rh_ * (k + 0.5) / 10)].sum()) / rh_, 3)
+                                      for k in range(10)],
+            'widthByGuideRender': [round(float(gmask[int(gb[1] + gh_ * (k + 0.5) / 10)].sum()) / gh_, 3)
+                                   for k in range(10)],
+        })
+    else:
+        info['note'] = 'No se detectó la figura en la referencia o en el render: sin alineación ni medidas.'
+    res['alignment'] = info
+    return res
 
 
 def op_compare(args):
-    """Render con el encuadre de la referencia (mismo formato de imagen) y la composición lado a lado."""
+    """Render con fondo transparente y el formato de la referencia, alineado a su figura."""
     ref = bpy.data.images.load(os.path.abspath(args['reference']), check_existing=False)
     rw, rh = ref.size
     bpy.data.images.remove(ref)
@@ -1269,10 +1396,119 @@ def op_compare(args):
     s.render.resolution_percentage = 100
     out = os.path.abspath(args['path'])
     tmp = os.path.splitext(out)[0] + '_render.png'
-    r = op_render(dict(args, path=tmp, percentage=100))
+    # transparente: así la figura del render se separa del fondo sin adivinar
+    r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
     c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
-                    'height': int(args.get('height', 800)), 'guides': args.get('guides', True)})
+                    'height': int(args.get('height', 800)), 'guides': args.get('guides', True),
+                    'align': args.get('align', True), 'overlay': args.get('overlay', True)})
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
+
+
+# ----------------------------------------------------------------------------------- revisión geométrica
+
+def _world_bvh(o, dg):
+    """BVH de la malla evaluada (con modificadores) en coordenadas del mundo, y una muestra de vértices."""
+    from mathutils.bvhtree import BVHTree
+    e = o.evaluated_get(dg)
+    me = e.to_mesh()
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.transform(o.matrix_world)
+    e.to_mesh_clear()
+    bmesh.ops.triangulate(bm, faces=bm.faces)
+    verts = [v.co.copy() for v in bm.verts]
+    step = max(1, len(verts) // 400)
+    tree = BVHTree.FromBMesh(bm)
+    bm.free()
+    return tree, verts[::step]
+
+
+def _inside_fraction(samples, tree):
+    """Fracción de los puntos que quedan dentro de una malla cerrada (normal del punto más cercano)."""
+    if not samples:
+        return 0.0
+    dentro = 0
+    for v in samples:
+        loc, nor, _, dist = tree.find_nearest(v)
+        if loc is not None and (v - loc).dot(nor) < -1e-5:
+            dentro += 1
+    return dentro / len(samples)
+
+
+def op_check(args):
+    """Busca problemas de armado: piezas que flotan sin tocar nada, piezas enterradas dentro de otra
+    (no se ven) y piezas que se atraviesan. Ignora cámaras, luces, cortadores y lo oculto en el render."""
+    tol = float(args.get('tolerance', 0.004))
+    nombres = args.get('objects')
+    s = _scene()
+    dg = bpy.context.evaluated_depsgraph_get()
+    objs = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render
+            and o.display_type not in ('WIRE', 'BOUNDS')]
+    if nombres:
+        objs = [o for o in objs if o.name in nombres] + [o for o in objs if o.name not in nombres]
+    data = {}
+    for o in objs:
+        try:
+            data[o.name] = _world_bvh(o, dg)
+        except Exception:
+            continue
+    names = [o.name for o in objs if o.name in data]
+    decal = {o.name for o in objs if o.get('bs_geom') and '"decal"' in o['bs_geom']}
+    boxes = {}
+    for n in names:
+        pts = data[n][1]
+        lo = Vector([min(p[i] for p in pts) for i in range(3)])
+        hi = Vector([max(p[i] for p in pts) for i in range(3)])
+        boxes[n] = (lo, hi)
+
+    def cerca(a, b, m):
+        (la, ha), (lb, hb) = boxes[a], boxes[b]
+        return all(la[i] - m <= hb[i] and lb[i] - m <= ha[i] for i in range(3))
+
+    tocando = {n: set() for n in names}
+    cruces = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if not cerca(a, b, tol):
+                continue
+            ta, sa = data[a]
+            tb, sb = data[b]
+            toca = bool(ta.overlap(tb))
+            if not toca:
+                # ¿a menos de tol? distancia mínima aproximada con la muestra de vértices
+                toca = any((tb.find_nearest(v)[3] or 1e9) <= tol for v in sa) or \
+                    any((ta.find_nearest(v)[3] or 1e9) <= tol for v in sb)
+            if not toca:
+                continue
+            tocando[a].add(b)
+            tocando[b].add(a)
+            if a in decal or b in decal:
+                continue
+            fa, fb = _inside_fraction(sa, tb), _inside_fraction(sb, ta)
+            if max(fa, fb) >= 0.02:
+                cruces.append((a, b, fa, fb))
+
+    enterrados, atraviesan = [], []
+    for a, b, fa, fb in cruces:
+        for x, y, f in ((a, b, fa), (b, a, fb)):
+            if f >= 0.9:
+                enterrados.append({'object': x, 'inside': y, 'fraction': round(f, 2)})
+        if max(fa, fb) < 0.9:
+            atraviesan.append({'a': a, 'b': b, 'aInsideB': round(fa, 2), 'bInsideA': round(fb, 2)})
+    atraviesan.sort(key=lambda c: -max(c['aInsideB'], c['bInsideA']))
+
+    suelo = min((boxes[n][0].z for n in names), default=0.0)
+    flotan = [{'object': n, 'bottom': round(boxes[n][0].z, 4)} for n in names
+              if not tocando[n] and boxes[n][0].z > suelo + tol]
+    if nombres:
+        sel = set(nombres)
+        flotan = [f for f in flotan if f['object'] in sel]
+        enterrados = [e for e in enterrados if e['object'] in sel]
+        atraviesan = [c for c in atraviesan if c['a'] in sel or c['b'] in sel]
+    return {'checked': len(names), 'floating': flotan, 'buried': enterrados,
+            'intersecting': atraviesan[:40],
+            'note': 'intersecting incluye uniones a propósito (orejas en la cabeza, manos en las mangas): '
+                    'revisa sobre todo las fracciones altas y las piezas que deberían ir por fuera.'}
 
 
 def op_export(args):
@@ -1319,6 +1555,7 @@ OPS = {
     'export': op_export,
     'compare': op_compare,
     'compose': op_compose,
+    'check': op_check,
 }
 
 

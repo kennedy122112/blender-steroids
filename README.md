@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.2.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.3.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,7 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
-- 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen y compara cada vuelta lado a lado con ella.
+- 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
 - 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave.
 - 👀 **Se revisa a sí mismo**: renderiza vistas de control (iso, frente, arriba...) y corrige lo que se ve mal antes de entregarte.
 - 📸 **Renderiza** imágenes y animaciones con EEVEE o Cycles, sin congelar tu Blender.
@@ -190,7 +190,8 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `exec -Script s.py [-Save x.blend]` | Ejecuta código `bpy`; devuelve `result` y `stdout` |
 | `render -Path img.png [...]` | Render (en vivo, sobre una copia en segundo plano) |
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
-| `compare -Reference ref.png -Path c.png` | Render con el formato de la referencia, lado a lado con ella y guías cada 10 % |
+| `compare -Reference ref.png -Path c.png` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos por guía) |
+| `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
 El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces) y [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`).

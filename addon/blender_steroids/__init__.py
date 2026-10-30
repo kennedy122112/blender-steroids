@@ -7,7 +7,7 @@ Panel en la Vista 3D -> barra lateral (N) -> pestaña «Steroids».
 bl_info = {
     'name': 'blender-steroids',
     'author': 'kennedy122112',
-    'version': (1, 2, 0),
+    'version': (1, 3, 0),
     'blender': (4, 2, 0),
     'location': 'Vista 3D > Barra lateral > Steroids',
     'description': 'Puente local entre tu agente de IA (Claude Code, Codex...) y Blender',
