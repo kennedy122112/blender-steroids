@@ -1626,6 +1626,68 @@ def op_compare(args):
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
 
 
+def _palette():
+    """Colores de material (como se ven en pantalla) de lo visible en el render: la paleta de clases."""
+    import numpy as np
+    s = _scene()
+    vistos = []
+    for o in s.objects:
+        if o.type not in ('MESH', 'FONT', 'CURVE') or o.hide_render or o.display_type in ('WIRE', 'BOUNDS'):
+            continue
+        for slot in o.material_slots:
+            m = slot.material
+            if m is None:
+                continue
+            c = tuple(round(_srgb(x), 3) for x in m.diffuse_color[:3])
+            if c not in [v[1] for v in vistos]:
+                vistos.append((m.name, c))
+    return [v[0] for v in vistos], np.array([v[1] for v in vistos], dtype=np.float32)
+
+
+def _classify(px, mask, pal):
+    """Asigna cada píxel de la figura al color de la paleta más parecido, sin depender del brillo
+    (la referencia tiene luz y sombra; el render de ajuste es plano)."""
+    import numpy as np
+    rgb = px[..., :3]
+    val = rgb.max(axis=2)
+    nrm = rgb / (val[..., None] + 0.06)
+    pv = pal.max(axis=1)
+    pn = pal / (pv[:, None] + 0.06)
+    d = ((nrm[..., None, :] - pn[None, None]) ** 2).sum(axis=3) + 0.35 * (val[..., None] - pv[None, None]) ** 2
+    lab = d.argmin(axis=2).astype(np.int16)
+    lab[~mask] = -1
+    return lab
+
+
+def _crop_labels(lab, mask, h):
+    """Etiquetas recortadas a la caja de la figura y escaladas (vecino más cercano) a la altura h."""
+    import numpy as np
+    b = _bbox(mask)
+    if not b:
+        return None
+    m = lab[b[1]:b[3] + 1, b[0]:b[2] + 1]
+    w = max(1, round(m.shape[1] * h / m.shape[0]))
+    ys = (np.arange(h) * m.shape[0] / h).astype(int)
+    xs = (np.arange(w) * m.shape[1] / w).astype(int)
+    return m[ys][:, xs]
+
+
+def _iou_classes(a, b, clases):
+    """IoU de cada clase entre dos mapas de etiquetas ya escalados a la misma altura, centrados en x."""
+    import numpy as np
+    W = max(a.shape[1], b.shape[1])
+    A = np.full((a.shape[0], W), -1, np.int16)
+    B = np.full((b.shape[0], W), -1, np.int16)
+    A[:, (W - a.shape[1]) // 2:(W - a.shape[1]) // 2 + a.shape[1]] = a
+    B[:, (W - b.shape[1]) // 2:(W - b.shape[1]) // 2 + b.shape[1]] = b
+    out = {}
+    for c in clases:
+        ma, mb = A == c, B == c
+        u = (ma | mb).sum()
+        out[c] = float((ma & mb).sum() / u) if u else 0.0
+    return out
+
+
 def _parse_view(v):
     if isinstance(v, str) and ',' in v:
         return [float(x) for x in v.strip('[]').split(',')]
@@ -1657,10 +1719,29 @@ def op_fit(args):
         v = _parse_view(r.get('view'))
         busca = v == 'fit' or (v is None and args.get('fitView'))
         refs.append({'path': os.path.abspath(r['path']), 'mask': mask, 'c': crop,
-                     'view': v if not busca and v else 'front', 'fit': bool(busca), 'vistas': [], 'iou': None})
+                     'view': v if not busca and v else 'front', 'fit': bool(busca), 'vistas': [], 'iou': None,
+                     'px': _load_pixels(os.path.abspath(r['path']), 400) if args.get('colors') else None})
+
+    # regiones de color: cada píxel de la referencia se asigna al material más parecido. Así cuentan
+    # las piezas chicas que casi no cambian la silueta (alas pegadas al cuerpo, patas, adornos)
+    colores = bool(args.get('colors'))
+    if colores:
+        nombres_mat, pal = _palette()
+        if len(pal) < 2:
+            colores = False
+        else:
+            for ref in refs:
+                lab = _classify(ref['px'], ref['mask'], pal)
+                ref['lab'] = _crop_labels(lab, ref['mask'], H)
+                total = max(1, int(ref['mask'].sum()))
+                ref['clases'] = [c for c in range(len(pal)) if (lab == c).sum() / total >= 0.01]
+                ref['px'] = None
 
     guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
                 s.render.film_transparent, s.camera, s.render.filepath)
+    sh = s.display.shading
+    guardado_sh = (sh.light, sh.color_type, sh.show_shadows, sh.show_cavity, s.view_settings.view_transform,
+                   s.view_settings.look)
     RES = int(args.get('resolution', 320))   # cuanto más cerca de la de compare, menos sorpresas
 
     def formato(ref):
@@ -1685,6 +1766,12 @@ def op_fit(args):
     _set_engine(s, 'workbench')
     s.render.film_transparent = True
     s.render.image_settings.file_format = 'PNG'
+    if colores:
+        # render plano con el color exacto de cada material: la clase de cada píxel es inequívoca
+        sh.light, sh.color_type = 'FLAT', 'MATERIAL'
+        sh.show_shadows = sh.show_cavity = False
+        s.view_settings.view_transform = 'Standard'
+        s.view_settings.look = 'None'
     cam = bpy.data.objects.new('bs_fitcam', bpy.data.cameras.new('bs_fitcam'))
     s.collection.objects.link(cam)
     s.camera = cam
@@ -1699,9 +1786,17 @@ def op_fit(args):
             frame_camera(cam, None, ref['view'])
             s.render.filepath = tmp
             bpy.ops.render.render(write_still=True)
-            m = _mask_crop(_load_pixels(tmp)[..., 3] > 0.5, H)
+            px = _load_pixels(tmp)
+            alfa = px[..., 3] > 0.5
+            m = _mask_crop(alfa, H)
             ref['iou'] = _iou_aligned(ref['c'], m) if m is not None else 0.0
-            total += ref['iou']
+            valor = ref['iou']
+            if colores and m is not None and ref['clases']:
+                lab = _crop_labels(_classify(px, alfa, pal), alfa, H)
+                ref['clsIou'] = _iou_classes(ref['lab'], lab, ref['clases'])
+                cw = float(args.get('colorWeight', 0.3))
+                valor = (1 - cw) * ref['iou'] + cw * sum(ref['clsIou'].values()) / len(ref['clsIou'])
+            total += valor
         return total / len(refs)
 
     # variables: escala (multiplicador, en escala logarítmica) y desplazamiento de cada pieza
@@ -1804,6 +1899,8 @@ def op_fit(args):
         (eng, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
          s.render.film_transparent, s.camera, s.render.filepath) = guardado
         s.render.engine = eng
+        (sh.light, sh.color_type, sh.show_shadows, sh.show_cavity, s.view_settings.view_transform,
+         s.view_settings.look) = guardado_sh
     if not bpy.app.background:
         try:
             with _ctx():
@@ -1817,13 +1914,17 @@ def op_fit(args):
     vistas = []
     for ref, i0 in zip(refs, inicio_por_vista):
         v = ref['view']
-        vistas.append({'reference': ref['path'], 'view': [round(x, 4) for x in v] if not isinstance(v, str) else v,
-                       'iouStart': i0, 'iouEnd': round(ref['iou'], 3),
-                       'search': [{'round': x['round'], 'azimuth': x['azimuth'], 'elevation': x['elevation']}
-                                  for x in ref['vistas']]})
+        extra = {}
+        if colores and ref.get('clsIou'):
+            extra['colorIoU'] = {nombres_mat[c]: round(x, 3) for c, x in ref['clsIou'].items()}
+        vistas.append(dict(extra, reference=ref['path'], view=[round(x, 4) for x in v] if not isinstance(v, str) else v,
+                       iouStart=i0, iouEnd=round(ref['iou'], 3),
+                       search=[{'round': x['round'], 'azimuth': x['azimuth'], 'elevation': x['elevation']}
+                               for x in ref['vistas']]))
     return {'iouStart': round(inicio, 3), 'iouEnd': round(mejor, 3), 'evals': evals, 'passes': historial,
             'references': vistas, 'parts': resultado,
-            'note': 'iou* es el promedio de las vistas. Escribe parts en el spec (location y scale) y vuelve a '
+            'score': 'silueta + regiones de color' if colores else 'silueta',
+            'note': 'iouStart/iouEnd es la puntuación que se maximiza (promedio de las vistas). Escribe parts en el spec (location y scale) y vuelve a '
                     'correr build (o build -Patch): las calcomanías y lo colocado con attach se recolocan.'}
 
 

@@ -148,10 +148,17 @@ de proporciones. Tarda 15-40 s.
   (ancho y profundidad se confunden); con tres cuartos + perfil, en la prueba a ciegas, el error del
   cuerpo bajó de 21 % a 3 % y el de la cabeza de 11 % a 6 %. **Pide al usuario una segunda vista**
   (frente o perfil) cuando las medidas importen; si no la hay, díselo al entregar.
-- **Límite de las piezas chicas**: lo que casi no cambia la silueta (alas pegadas al cuerpo, penachos,
-  patas debajo, detalles delante de otra pieza) no se recupera bien: en la prueba quedaron con 28-34 %
-  de error en sus medidas aunque la silueta coincidía. Ajústalas tú mirando la imagen, o deja fuera de
-  `-Parts` las que ya estén bien. `-Detail 320` (más resolución interna) no lo arregla.
+- **Piezas chicas: `-Colors`.** Lo que casi no cambia la silueta (alas pegadas al cuerpo, penachos,
+  patas, piezas delante de otra) no se recupera con la silueta sola: en la prueba quedaron con 28-34 %
+  de error. Con `-Colors`, `fit` asigna cada píxel de la referencia al material más parecido (sin
+  depender de la luz) y puntúa también cuánto coincide cada región de color; `-ColorWeight` (0.3) es
+  su peso frente a la silueta. En la prueba a ciegas el error medio de las piezas bajó de 18 % a 11 %
+  (penachos 34 % → 5 %, sombrero 10 % → 4 %), a cambio de bajar algo la silueta (tres cuartos 0.91 →
+  0.875). Es un compromiso: si importa la silueta exacta, sin `-Colors`; si importan las piezas, con él.
+  Funciona mejor cuando los materiales tienen colores bien distintos: dos marrones parecidos (cuerpo y
+  ala) se confunden, y los materiales con emisión fuerte pueden no reconocerse. Usa en el spec colores
+  parecidos a los de la referencia para que la asignación sea buena.
+  `-Detail 320` (más resolución interna) no arregla las piezas chicas.
 - No inventa piezas: ajusta las que hay. Si falta una forma de la referencia, agrégala antes.
 
 ### Revisar el armado (`check`)

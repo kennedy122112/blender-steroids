@@ -25,7 +25,7 @@ Uso (toda salida es JSON por stdout):
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
   fit --reference ref.png [--reference perfil.png ...] --parts partes.json
-      [--view right ... | --fit-view] [--budget 400] [--save x.blend]
+      [--view right ... | --fit-view] [--budget 400] [--colors [--color-weight 0.3]] [--save x.blend]
                                             (cada --view va con su --reference, en orden; las que falten
                                             se buscan con --fit-view)
                                             ajusta escala y posición de las piezas hasta que la silueta
@@ -501,7 +501,8 @@ def cmd_fit(a):
         v = _vista(vistas[i]) if i < len(vistas) else ('fit' if a.fit_view else None)
         refs.append({'path': os.path.abspath(r), 'view': v})
     args = {'references': refs, 'parts': parts, 'budget': a.budget, 'detail': a.detail,
-            'resolution': max(320, a.detail * 2)}
+            'resolution': max(320, a.detail * 2), 'colors': a.colors,
+            'colorWeight': a.colorweight}
     if a.fit_view:
         args['fitView'] = True
     return run('fit', args, a)
@@ -716,6 +717,8 @@ def main(argv):
     sp.add_argument('--view', action='append')
     sp.add_argument('--budget', type=int, default=400)
     sp.add_argument('--detail', type=int, default=160)
+    sp.add_argument('--colors', action='store_true')
+    sp.add_argument('--colorweight', '--color-weight', dest='colorweight', type=float, default=0.3)
     sp.add_argument('--save')
     sp = p('check')
     sp.add_argument('--objects')
