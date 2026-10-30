@@ -990,13 +990,20 @@ OPS = {
 }
 
 
+def _bridge():
+    """Versión y carpeta del add-on cargado: blender-cli las compara con las suyas."""
+    from .version import VERSION
+    return {'version': VERSION, 'path': os.path.dirname(os.path.realpath(__file__))}
+
+
 def dispatch(req):
     cmd = req.get('cmd')
     fn = OPS.get(cmd)
     if fn is None:
-        return {'ok': False, 'error': 'Comando desconocido: %s' % cmd}
+        return {'ok': False, 'error': 'Comando desconocido: %s' % cmd, '_bridge': _bridge()}
     try:
         out = fn(req.get('args') or {})
-        return dict({'ok': True}, **out)
+        return dict({'ok': True}, **out, _bridge=_bridge())
     except Exception as e:
-        return {'ok': False, 'error': '%s: %s' % (type(e).__name__, e), 'trace': traceback.format_exc()[-4000:]}
+        return {'ok': False, 'error': '%s: %s' % (type(e).__name__, e), 'trace': traceback.format_exc()[-4000:],
+                '_bridge': _bridge()}

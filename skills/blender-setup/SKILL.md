@@ -9,12 +9,22 @@ blender-steroids controla **Blender** en local con su API de Python (`bpy`). No 
 ni nube. Hay dos piezas:
 
 - **blender-cli**, el puente que ejecutas tú. En el resto de las skills de Blender, **blender-cli** significa:
-  - **Windows**: `powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.blender-steroids\bin\blender-cli.ps1" <comando> ...`
-    (desde bash/Git Bash: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE/.blender-steroids/bin/blender-cli.ps1" <comando> ...`).
+  - **Windows**: `"%USERPROFILE%\.blender-steroids\bin\blender-cli.cmd" <comando> ...`
+    (desde PowerShell: `& "$env:USERPROFILE\.blender-steroids\bin\blender-cli.cmd" <comando> ...`;
+    desde bash/Git Bash: `"$USERPROFILE/.blender-steroids/bin/blender-cli.cmd" <comando> ...`).
+    El `.cmd` no pasa por PowerShell. Si solo puedes usar el `.ps1`, funciona igual, pero PowerShell
+    puede imprimir antes avisos propios (p. ej. «InitializeDefaultDrives» por una unidad de red caída)
+    que **no** son fallos del comando.
   - **macOS y Linux**: `bash ~/.blender-steroids/bin/blender-cli <comando> ...`
 
-  Usa el Python de la máquina o, si no hay, el que trae Blender. Las opciones valen en los dos estilos
-  (`-Path x` o `--path x`). Toda salida es JSON por stdout.
+  Usa siempre la copia instalada en `~/.blender-steroids`, nunca una que descargues o clones tú: esa
+  es la que coincide con estas skills y con el add-on de Blender. Usa el Python de la máquina o, si no
+  hay, el que trae Blender. Las opciones valen en los dos estilos (`-Path x` o `--path x`).
+
+  **Toda salida es JSON por stdout**, también los errores (`ok: false`, `error`, y casi siempre `hint`
+  con qué hacer). Fíjate en `ok` y en `warnings`, no en lo que aparezca por stderr. Si una respuesta
+  trae `warnings` (otra copia de blender-steroids, add-on desactualizado en el Blender abierto),
+  cuéntaselo al usuario.
 - **El add-on `blender_steroids`**, que corre dentro de Blender y abre el puerto local `127.0.0.1:9777`
   por el que blender-cli le habla. Tiene un panel en la Vista 3D → barra lateral (N) → «Steroids».
 
@@ -42,7 +52,19 @@ lo cierre y lo abra de nuevo, o que lo active en *Edición > Preferencias > Comp
   Blender en segundo plano (si no existe, se crea). Sirve cuando el usuario no quiere ver Blender, en
   un servidor, o para lotes. Es más lento por pedido (Blender arranca cada vez, unos segundos).
 
+## Cuando algo falla: `blender-cli doctor`
+Revisa todo de una vez: versión y ubicación de blender-cli (avisa si es una copia distinta de la
+instalada), Python, Blender y su versión, el add-on y a qué copia apunta, el puerto (libre, ocupado
+por otro programa o bloqueado por un sandbox), si el Blender abierto tiene cargado un add-on de otra
+versión, unidades de red caídas y la carpeta temporal. Cada revisión trae `ok`, `detail` y, si falla,
+`fix`; `fixes` las junta. Ejecútalo antes de intentar otra vía y aplica o cuenta los `fix`.
+
 ## Problemas frecuentes
+- **«Error al intentar realizar la operación InitializeDefaultDrives»**: lo imprime PowerShell, no
+  blender-cli; hay una unidad de red que no responde. El comando funcionó si el JSON dice `ok: true`.
+  Usa `blender-cli.cmd`. Para quitarlo, el usuario reconecta la red/VPN o borra la unidad.
+- **Aviso de add-on de otra versión**: el Blender abierto cargó el add-on antes de actualizar
+  blender-steroids. Pide al usuario que cierre y abra Blender.
 - **`bridge: false` con Blender abierto**: ese Blender no tiene el add-on activo (se abrió antes del
   `setup`), o lo detuvo el usuario en el panel «Steroids». Que lo active ahí, o reabrirlo.
 - **Dos Blender abiertos**: solo el primero que arrancó tiene el puerto; el otro avisa en su consola.

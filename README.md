@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.0.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.1.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -133,6 +133,8 @@ Está pensado para modelado por piezas (hard-surface, mobiliario, producto, maqu
 
 | Síntoma | Qué hacer |
 |---|---|
+| Aparece «Error al intentar realizar la operación InitializeDefaultDrives» | Es un aviso de PowerShell por una unidad de red que no responde, no un fallo de blender-steroids. En Windows el agente usa `blender-cli.cmd`, que no pasa por PowerShell. Para quitarlo, reconecta la red/VPN o borra la unidad (`net use X: /delete`). |
+| Algo no funciona y no sabes qué | Pídele al agente que ejecute `doctor`: revisa todo y dice cómo arreglarlo. |
 | El agente dice que **no hay Blender con el puente** y sí está abierto | Ese Blender se abrió antes de instalar el add-on: ciérralo y ábrelo, o actívalo en *Preferencias > Complementos > blender-steroids*. |
 | Tengo dos Blender abiertos | Solo uno tiene el puente (el primero). Mira el panel *Steroids* en la barra lateral (N) de la Vista 3D. |
 | El puerto 9777 lo usa otro programa | Define la variable `BLENDER_STEROIDS_PORT` con otro número y reabre Blender. |
@@ -173,11 +175,12 @@ Si el repositorio queda fuera de `~/.blender-steroids`, el instalador crea ese e
 
 ### blender-cli
 
-Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File bin/blender-cli.ps1 <comando>`; macOS/Linux: `bash bin/blender-cli <comando>` (o en cualquiera, `python3 bin/blender_cli.py <comando>`). Las opciones valen como `-Path x` o `--path x`. Toda salida es JSON. Con `-File x.blend` cualquier comando trabaja sin interfaz.
+Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cli.ps1` sigue disponible); macOS/Linux: `bash bin/blender-cli <comando>` (o en cualquiera, `python3 bin/blender_cli.py <comando>`). Las opciones valen como `-Path x` o `--path x`. Toda salida es JSON, también los errores (`ok`, `error`, `hint`, `warnings`). Con `-File x.blend` cualquier comando trabaja sin interfaz.
 
 | Comando | Para qué |
 |---|---|
 | `status` | ¿Blender instalado?, versión, ¿add-on?, ¿puente activo? |
+| `doctor` | Revisa todo (Python, Blender, add-on, puerto, sandbox, versión del add-on cargado, copia en uso, unidades de red) y dice cómo arreglar cada problema |
 | `setup` | Enlaza y activa el add-on en las preferencias de Blender |
 | `launch [-File x.blend]` | Abre Blender con el puente activo y espera a que responda |
 | `info`, `scene [-Object n]` | Resumen y contenido de la escena |
@@ -195,7 +198,7 @@ El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-mo
 |---|---|
 | `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
-| `bin/blender_cli.py`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
+| `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
 | `skills/` | Las cuatro skills (`SKILL.md`) |
 | `install.ps1`, `install.sh` | Instalador para todos los agentes (Windows, macOS/Linux) |
 

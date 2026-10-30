@@ -7,6 +7,8 @@ Dos formas de trabajar:
 
 Uso (toda salida es JSON por stdout):
   status                                    ¿Blender instalado? ¿abierto? ¿puente activo?
+  doctor                                    revisa todo (Python, Blender, add-on, puerto, versión, copia,
+                                            unidades de red) y dice cómo arreglar cada problema
   setup                                     instala y activa el add-on en el Blender de esta PC
   launch [--file x.blend]                   abre Blender con el puente activo y espera a que responda
   info | scene [--object nombre]            qué hay en la escena
@@ -38,6 +40,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDON_DIR = os.path.join(ROOT, 'addon')
 PORT = int(os.environ.get('BLENDER_STEROIDS_PORT', '9777'))
 APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))
+HOME_INSTALL = os.path.join(os.path.expanduser('~'), '.blender-steroids')
+
+
+def _read_version():
+    try:
+        with open(os.path.join(ADDON_DIR, 'blender_steroids', 'version.py'), encoding='utf-8') as f:
+            return re.search(r"VERSION = '([^']+)'", f.read()).group(1)
+    except (OSError, AttributeError):
+        return None
+
+
+VERSION = _read_version()
+WARNINGS = []          # avisos que acompañan a cualquier respuesta (copia distinta, add-on desactualizado)
+LAST_CONNECT_ERROR = None
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -46,8 +62,29 @@ except Exception:
 
 
 def out(obj, code=0):
+    if WARNINGS and isinstance(obj, dict):
+        obj.setdefault('warnings', [])
+        obj['warnings'] = list(dict.fromkeys(obj['warnings'] + WARNINGS))
     print(json.dumps(obj, ensure_ascii=False, indent=1, default=str))
+    sys.stdout.flush()
     sys.exit(code)
+
+
+def _same(a, b):
+    try:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+    except OSError:
+        return False
+
+
+def copy_warning():
+    """Avisa si este blender-cli no es el instalado en ~/.blender-steroids (p. ej. una copia que un
+    agente descargó en su carpeta temporal): sus cambios no llegan a las skills ni al add-on."""
+    if os.path.isdir(HOME_INSTALL) and not _same(ROOT, HOME_INSTALL):
+        return ('Estás usando una copia de blender-steroids en %s; la instalada es %s (%s). '
+                'Usa la instalada para que coincida con las skills y el add-on.'
+                % (ROOT, HOME_INSTALL, os.path.realpath(HOME_INSTALL)))
+    return None
 
 
 def fail(msg, **extra):
@@ -132,22 +169,66 @@ def blender_running():
 
 def live(cmd, args=None, timeout=600):
     """Envía un pedido al Blender abierto. Devuelve None si el puente no responde."""
+    global LAST_CONNECT_ERROR
     try:
         s = socket.create_connection(('127.0.0.1', PORT), timeout=3)
-    except OSError:
+    except PermissionError:
+        LAST_CONNECT_ERROR = 'sandbox'   # el agente no tiene permiso para abrir conexiones locales
         return None
-    with s:
-        s.settimeout(timeout)
-        s.sendall(json.dumps({'cmd': cmd, 'args': args or {}}, ensure_ascii=False).encode('utf-8') + b'\n')
-        data = b''
-        while not data.endswith(b'\n'):
-            chunk = s.recv(1 << 16)
-            if not chunk:
-                break
-            data += chunk
+    except OSError as e:
+        LAST_CONNECT_ERROR = 'refused' if isinstance(e, ConnectionRefusedError) else str(e)
+        return None
+    LAST_CONNECT_ERROR = None
+    try:
+        with s:
+            s.settimeout(timeout)
+            s.sendall(json.dumps({'cmd': cmd, 'args': args or {}}, ensure_ascii=False).encode('utf-8') + b'\n')
+            data = b''
+            while not data.endswith(b'\n'):
+                chunk = s.recv(1 << 16)
+                if not chunk:
+                    break
+                data += chunk
+    except socket.timeout:
+        return {'ok': False, 'error': 'Blender no respondió en %d s.' % timeout,
+                'hint': 'Puede estar renderizando o esperando una respuesta en un diálogo. Espera o ciérralo.'}
+    except OSError as e:
+        return {'ok': False, 'error': 'Se cortó la conexión con Blender: %s' % e}
     if not data:
-        return {'ok': False, 'error': 'Blender cerró la conexión sin responder'}
-    return json.loads(data.decode('utf-8'))
+        return {'ok': False, 'error': 'Blender cerró la conexión sin responder',
+                'hint': 'El puerto %d lo puede estar usando otro programa. Ejecuta `doctor`.' % PORT}
+    try:
+        resp = json.loads(data.decode('utf-8'))
+    except ValueError:
+        return {'ok': False, 'error': 'Respuesta no válida en el puerto %d: no parece blender-steroids.' % PORT,
+                'hint': 'Otro programa usa ese puerto. Define BLENDER_STEROIDS_PORT con otro número.'}
+    check_bridge(resp.pop('_bridge', None) if isinstance(resp, dict) else None)
+    return resp
+
+
+def check_bridge(bridge):
+    """Compara el add-on que tiene cargado el Blender abierto con este blender-cli."""
+    if bridge is None:
+        WARNINGS.append('El Blender abierto tiene un add-on de blender-steroids anterior a 1.1.0. '
+                        'Cierra y vuelve a abrir Blender para cargar el actual (%s).' % VERSION)
+        return
+    if VERSION and bridge.get('version') != VERSION:
+        WARNINGS.append('El Blender abierto tiene cargado el add-on %s y este blender-cli es %s. Cierra y '
+                        'vuelve a abrir Blender (o reinstala con `setup`).' % (bridge.get('version'), VERSION))
+    path = bridge.get('path')
+    if path and not _same(path, os.path.join(ADDON_DIR, 'blender_steroids')):
+        WARNINGS.append('El add-on cargado en Blender viene de %s, no de esta copia (%s).' % (path, ROOT))
+
+
+def not_connected():
+    """Error común cuando no hay puente: distingue sandbox de Blender cerrado."""
+    if LAST_CONNECT_ERROR == 'sandbox':
+        fail('El agente no tiene permiso para conectarse al puerto local %d (sandbox).' % PORT,
+             hint='Vuelve a ejecutar el comando con acceso completo / fuera del sandbox.')
+    fail('No hay un Blender abierto con el puente activo.',
+         hint='Ejecuta `launch` para abrir Blender listo, activa el add-on (`setup`) en tu Blender, '
+              'o usa --file <archivo.blend> para trabajar sin interfaz. `doctor` revisa todo.',
+         blenderRunning=blender_running())
 
 
 def headless(cmd, args=None, file=None, save=None, timeout=None):
@@ -184,10 +265,7 @@ def run(cmd, args, a, live_only=False):
         return headless(cmd, args, file=a.file, save=getattr(a, 'save', None))
     resp = live(cmd, args)
     if resp is None:
-        fail('No hay un Blender abierto con el puente activo.',
-             hint='Ejecuta `launch` para abrir Blender listo, activa el add-on (`setup`) en tu Blender, '
-                  'o usa --file <archivo.blend> para trabajar sin interfaz.',
-             blenderRunning=blender_running())
+        not_connected()
     resp['mode'] = 'live'
     if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec'):
         sv = live('save', {'path': a.save})
@@ -202,8 +280,7 @@ def on_copy(cmd, args, a):
     tmp = os.path.join(tempfile.mkdtemp(prefix='bs-'), 'copia.blend')
     sv = live('save', {'path': tmp, 'copy': True})
     if sv is None:
-        fail('No hay un Blender abierto con el puente activo.',
-             hint='Usa --file <archivo.blend>, `launch` o activa el add-on con `setup`.')
+        not_connected()
     if not sv.get('ok'):
         out(sv, 1)
     resp = headless(cmd, args, file=tmp)
@@ -216,7 +293,7 @@ def on_copy(cmd, args, a):
 def cmd_status(a):
     exe = find_blender()
     ver = version_of(exe) if exe else None
-    st = {'ok': True, 'blender': exe, 'version': ver, 'running': blender_running(), 'port': PORT}
+    st = {'ok': True, 'cli': VERSION, 'blender': exe, 'version': ver, 'running': blender_running(), 'port': PORT}
     if ver:
         link = os.path.join(user_addons_dir(ver), 'blender_steroids')
         st['addonInstalled'] = os.path.exists(os.path.join(link, '__init__.py'))
@@ -306,15 +383,23 @@ def cmd_launch(a):
 
 
 def cmd_spec_build(a):
-    with open(a.spec, encoding='utf-8-sig') as f:
-        spec = json.load(f)
+    try:
+        with open(a.spec, encoding='utf-8-sig') as f:
+            spec = json.load(f)
+    except FileNotFoundError:
+        fail('No existe el spec %s' % os.path.abspath(a.spec))
+    except ValueError as e:
+        fail('El spec %s no es JSON válido: %s' % (a.spec, e))
     spec['_baseDir'] = os.path.dirname(os.path.abspath(a.spec))
     return run('build', spec, a)
 
 
 def cmd_exec(a):
-    with open(a.script, encoding='utf-8-sig') as f:
-        code = f.read()
+    try:
+        with open(a.script, encoding='utf-8-sig') as f:
+            code = f.read()
+    except FileNotFoundError:
+        fail('No existe el script %s' % os.path.abspath(a.script))
     return run('exec', {'code': code, 'filename': os.path.abspath(a.script)}, a)
 
 
@@ -342,11 +427,138 @@ def cmd_export(a):
     return on_copy('export', args, a)
 
 
+def _network_drives():
+    """Unidades de red de Windows que no responden (PowerShell avisa «InitializeDefaultDrives» por ellas)."""
+    if sys.platform != 'win32':
+        return []
+    import ctypes
+    import string
+    import threading
+    k32 = ctypes.windll.kernel32
+    mask = k32.GetLogicalDrives()
+    caidas = []
+    for i, letra in enumerate(string.ascii_uppercase):
+        if not mask & (1 << i):
+            continue
+        raiz = letra + ':\\'
+        if k32.GetDriveTypeW(raiz) != 4:        # 4 = DRIVE_REMOTE
+            continue
+        res = {}
+
+        def probar():
+            libre = ctypes.c_ulonglong(0)
+            res['ok'] = bool(k32.GetDiskFreeSpaceExW(raiz, None, None, ctypes.byref(libre)))
+        t = threading.Thread(target=probar, daemon=True)
+        t.start()
+        t.join(3)                                # una unidad caída puede tardar en fallar
+        if not res.get('ok'):
+            caidas.append(letra + ':')
+    return caidas
+
+
+def _probe_port():
+    """'bridge' si responde blender-steroids, 'other' si otro programa usa el puerto, 'free' si nadie,
+    'sandbox' si el agente no puede abrir conexiones locales."""
+    resp = live('ping', timeout=5)
+    if resp is None:
+        return 'sandbox' if LAST_CONNECT_ERROR == 'sandbox' else 'free'
+    return 'bridge' if resp.get('pong') else 'other'
+
+
+def cmd_doctor(a):
+    checks = []
+
+    def check(name, ok, detail, fix=None, level='error'):
+        c = {'check': name, 'ok': bool(ok), 'detail': detail}
+        if not ok:
+            c['level'] = level
+            if fix:
+                c['fix'] = fix
+        checks.append(c)
+        return ok
+
+    check('cli', VERSION is not None, 'blender-cli %s en %s' % (VERSION, ROOT),
+          'Falta addon/blender_steroids/version.py: reinstala blender-steroids.')
+    w = copy_warning()
+    check('copia', w is None, w or 'Es la copia instalada (%s)' % HOME_INSTALL if os.path.isdir(HOME_INSTALL)
+          else 'No hay instalación en %s' % HOME_INSTALL,
+          'Llama al puente instalado: %s' % os.path.join(HOME_INSTALL, 'bin', 'blender-cli.cmd' if
+                                                         sys.platform == 'win32' else 'blender-cli'),
+          level='warning')
+    check('python', sys.version_info >= (3, 8), '%s (%s)' % (sys.version.split()[0], sys.executable),
+          'Instala Python 3.8 o superior, o deja que el lanzador use el que trae Blender.')
+
+    exe = find_blender()
+    ver = version_of(exe) if exe else None
+    nums = [int(x) for x in re.findall(r'\d+', ver or '0')[:2]] + [0]
+    if check('blender', exe, '%s (%s)' % (exe, ver) if exe else 'No encontrado',
+             'Instala Blender desde blender.org o define BLENDER_STEROIDS_BLENDER con la ruta del ejecutable.'):
+        check('blender-version', nums[:2] >= [4, 2], 'Blender %s' % ver,
+              'blender-steroids necesita Blender 4.2 o superior.')
+
+    if ver:
+        link = os.path.join(user_addons_dir(ver), 'blender_steroids')
+        instalado = os.path.exists(os.path.join(link, '__init__.py'))
+        if check('addon', instalado, link if instalado else 'No está en %s' % link,
+                 'Ejecuta `setup` para instalarlo y activarlo.', level='warning'):
+            check('addon-copia', _same(link, os.path.join(ADDON_DIR, 'blender_steroids')),
+                  'El add-on apunta a %s' % os.path.realpath(link),
+                  'Ejecuta `setup` desde la copia que quieres usar para reenlazarlo.', level='warning')
+
+    abierto = blender_running()
+    estado = _probe_port()
+    if estado == 'sandbox':
+        check('puerto', False, 'Sin permiso para conectarse a 127.0.0.1:%d' % PORT,
+              'El agente corre en un sandbox: vuelve a ejecutar con acceso completo.')
+    elif estado == 'other':
+        check('puerto', False, 'Otro programa responde en el puerto %d' % PORT,
+              'Define BLENDER_STEROIDS_PORT con otro número (igual para Blender y blender-cli) y reabre Blender.')
+    elif estado == 'free':
+        check('puente', False, 'Blender %s, puente sin respuesta en el puerto %d'
+              % ('abierto' if abierto else 'cerrado', PORT),
+              ('Ese Blender no tiene el add-on activo: reinícialo o actívalo en Preferencias > Complementos.'
+               if abierto else 'Ejecuta `launch`, o usa --file para trabajar sin interfaz.'), level='warning')
+    else:
+        info = live('info', timeout=10) or {}
+        check('puente', True, 'Blender %s responde en el puerto %d (archivo: %s)'
+              % (info.get('blender'), PORT, info.get('file') or 'sin guardar'))
+        if WARNINGS:
+            check('puente-version', False, ' '.join(WARNINGS),
+                  'Cierra y vuelve a abrir Blender para que cargue el add-on actual.', level='warning')
+            WARNINGS.clear()
+
+    caidas = _network_drives()
+    check('unidades-red', not caidas,
+          'Unidades de red sin respuesta: %s' % ', '.join(caidas) if caidas else 'Sin unidades de red caídas',
+          'PowerShell muestra «InitializeDefaultDrives» por ellas: es solo un aviso, el comando funciona. '
+          'Para quitarlo, reconecta la red/VPN o borra la unidad (net use X: /delete). En Windows usa '
+          'blender-cli.cmd, que no pasa por PowerShell.', level='warning')
+
+    try:
+        with tempfile.NamedTemporaryFile(prefix='bs-', delete=True):
+            pass
+        check('temporal', True, tempfile.gettempdir())
+    except OSError as e:
+        check('temporal', False, str(e), 'La carpeta temporal no admite escritura: render y export la necesitan.')
+
+    errores = [c for c in checks if not c['ok'] and c.get('level') == 'error']
+    avisos = [c for c in checks if not c['ok'] and c.get('level') == 'warning']
+    return {'ok': not errores, 'cli': VERSION, 'errors': len(errores), 'warnings_count': len(avisos),
+            'checks': checks, 'fixes': [c['fix'] for c in errores + avisos if c.get('fix')]}
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """Errores de argumentos como JSON, no como texto de uso."""
+
+    def error(self, message):
+        fail('Argumentos no válidos: %s' % message, usage=self.format_usage().strip())
+
+
 def main(argv):
     # admite el estilo de ea-cli: -Path, -Spec, -File...
     argv = ['--' + x[1:].lower() if re.fullmatch(r'-[A-Za-z][A-Za-z]+', x) else x for x in argv]
-    ap = argparse.ArgumentParser(prog='blender-cli', description='Puente local con Blender')
-    sub = ap.add_subparsers(dest='cmd')
+    ap = JsonArgumentParser(prog='blender-cli', description='Puente local con Blender')
+    sub = ap.add_subparsers(dest='cmd', parser_class=JsonArgumentParser)
 
     def p(name, **kw):
         sp = sub.add_parser(name, **kw)
@@ -354,6 +566,7 @@ def main(argv):
         return sp
 
     p('status')
+    p('doctor')
     p('setup')
     sp = p('launch')
     sp.add_argument('--wait', type=int, default=90)
@@ -388,9 +601,14 @@ def main(argv):
     sp.add_argument('--path', required=True)
     sp.add_argument('--objects')
     a = ap.parse_args(argv)
+    w = copy_warning()
+    if w and a.cmd != 'doctor':
+        WARNINGS.append(w)
 
     if a.cmd in (None, 'status'):
         res = cmd_status(a)
+    elif a.cmd == 'doctor':
+        res = cmd_doctor(a)
     elif a.cmd == 'setup':
         res = cmd_setup(a)
     elif a.cmd == 'launch':
@@ -417,4 +635,14 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        out({'ok': False, 'error': 'Interrumpido.'}, 130)
+    except BaseException as e:   # toda salida es JSON, también lo inesperado
+        import traceback
+        out({'ok': False, 'error': '%s: %s' % (type(e).__name__, e),
+             'hint': 'Error inesperado de blender-cli. Ejecuta `doctor`; si persiste, abre un issue con este trace.',
+             'trace': traceback.format_exc()[-3000:]}, 1)
