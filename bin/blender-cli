@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# blender-cli (macOS y Linux) - lanza blender_cli.py con el Python que haya en esta máquina.
+# Si no hay python3, usa el que trae Blender, así que no hace falta instalar nada más.
+#
+#   blender-cli status
+#   blender-cli build --spec escena.json
+#   blender-cli render --path vista.png --preview
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONIOENCODING=utf-8
+
+py="$(command -v python3 || true)"
+# en macOS, /usr/bin/python3 sin las Command Line Tools abre un aviso de instalación en vez de ejecutar
+if [ "$(uname)" = "Darwin" ] && [ "$py" = "/usr/bin/python3" ] && ! xcode-select -p >/dev/null 2>&1; then
+  py=""
+fi
+
+if [ -z "$py" ]; then
+  if [ -n "${BLENDER_STEROIDS_BLENDER:-}" ]; then
+    roots=("$(dirname "$BLENDER_STEROIDS_BLENDER")/.." "$(dirname "$BLENDER_STEROIDS_BLENDER")")
+  else
+    roots=(/Applications/Blender*.app/Contents/Resources "$HOME"/Applications/Blender*.app/Contents/Resources
+           "$HOME"/blender* /opt/blender* /usr/share/blender)
+  fi
+  for r in "${roots[@]}"; do
+    for cand in "$r"/[0-9]*.[0-9]*/python/bin/python3*; do
+      if [ -x "$cand" ]; then py="$cand"; break 2; fi
+    done
+  done
+fi
+
+if [ -z "$py" ]; then
+  echo '{ "ok": false, "error": "No hay Python ni Blender instalados en esta máquina. Instala Blender desde blender.org." }'
+  exit 1
+fi
+exec "$py" -I "$here/blender_cli.py" "$@"

@@ -27,6 +27,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -65,18 +66,47 @@ def find_blender():
             cands += glob.glob(os.path.join(base, 'Blender Foundation', '*', 'blender.exe'))
             cands += glob.glob(os.path.join(base, 'Steam', 'steamapps', 'common', 'Blender', 'blender.exe'))
     cands += glob.glob(os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Blender*', '*', 'blender.exe'))
-    cands += glob.glob('/Applications/Blender.app/Contents/MacOS/Blender')
-    cands += glob.glob('/usr/bin/blender') + glob.glob('/snap/bin/blender')
+    # macOS: Blender.app (también renombrada, p. ej. «Blender 4.2.app») en /Applications o ~/Applications
+    for apps in ('/Applications', os.path.expanduser('~/Applications'),
+                 os.path.expanduser('~/Library/Application Support/Steam/steamapps/common/Blender')):
+        cands += glob.glob(os.path.join(apps, 'Blender*.app', 'Contents', 'MacOS', 'Blender'))
+    cands += glob.glob(os.path.expanduser('~/.steam/steam/steamapps/common/Blender/blender'))
+    # Linux: paquete, snap, flatpak o el .tar.xz descomprimido en la carpeta personal
+    cands += glob.glob('/usr/bin/blender') + glob.glob('/usr/local/bin/blender') + glob.glob('/snap/bin/blender')
+    cands += glob.glob(os.path.expanduser('~/blender*/blender')) + glob.glob('/opt/blender*/blender')
+    if not cands and shutil.which('blender'):
+        cands.append(shutil.which('blender'))
     if not cands:
         return None
     # la versión más alta gana
     return max(cands, key=lambda p: [int(x) for x in re.findall(r'\d+', version_of(p) or '0')])
 
 
+_versions = {}
+
+
 def version_of(exe):
-    d = os.path.dirname(exe)
-    vs = [n for n in os.listdir(d) if re.fullmatch(r'\d+\.\d+', n) and os.path.isdir(os.path.join(d, n))]
-    return max(vs, key=lambda v: [int(x) for x in v.split('.')]) if vs else None
+    """Versión corta (5.2) por la carpeta de datos de Blender; si no aparece, preguntándole a Blender."""
+    if exe in _versions:
+        return _versions[exe]
+    real = os.path.realpath(exe)
+    dirs = [os.path.dirname(exe), os.path.dirname(real),
+            os.path.join(os.path.dirname(os.path.dirname(real)), 'Resources'),   # macOS: Contents/Resources/5.2
+            '/usr/share/blender']                                                 # paquetes de Linux
+    vs = []
+    for d in dirs:
+        if os.path.isdir(d):
+            vs += [n for n in os.listdir(d) if re.fullmatch(r'\d+\.\d+', n) and os.path.isdir(os.path.join(d, n))]
+    v = max(vs, key=lambda v: [int(x) for x in v.split('.')]) if vs else None
+    if v is None:
+        try:
+            r = subprocess.run([exe, '--version'], capture_output=True, text=True, timeout=60)
+            m = re.search(r'Blender (\d+\.\d+)', r.stdout)
+            v = m.group(1) if m else None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    _versions[exe] = v
+    return v
 
 
 def user_addons_dir(version):
@@ -89,7 +119,11 @@ def user_addons_dir(version):
 
 def blender_running():
     if sys.platform != 'win32':
-        return subprocess.run(['pgrep', '-x', 'blender'], capture_output=True).returncode == 0
+        # en macOS el proceso se llama «Blender»; en Linux, «blender»
+        try:
+            return subprocess.run(['pgrep', '-ix', 'blender'], capture_output=True).returncode == 0
+        except OSError:
+            return False
     r = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq blender.exe', '/NH'], capture_output=True, text=True)
     return 'blender.exe' in r.stdout.lower()
 
@@ -253,11 +287,13 @@ def cmd_launch(a):
     if a.file:
         argv.append(os.path.abspath(a.file))
     argv += ['--python', os.path.join(ADDON_DIR, 'startup.py')]
-    flags = 0
+    # que Blender siga abierto aunque termine el proceso del agente
     if sys.platform == 'win32':
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(argv, creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     stdin=subprocess.DEVNULL, close_fds=True)
+        detach = {'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        detach = {'start_new_session': True}
+    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                     close_fds=True, **detach)
     t0 = time.time()
     while time.time() - t0 < a.wait:
         info = live('info', timeout=5)

@@ -10,7 +10,7 @@
 <p align="center">
   <img alt="funciona con" src="https://img.shields.io/badge/funciona%20con-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode%20%C2%B7%20Antigravity-e87d0d?style=flat">
   <img alt="powered by" src="https://img.shields.io/badge/powered%20by-Python%20stdlib%20%C2%B7%20bpy-3776ab?style=flat&logo=python&logoColor=white">
-  <img alt="plataforma" src="https://img.shields.io/badge/plataforma-Windows-0078d4?style=flat&logo=windows&logoColor=white">
+  <img alt="plataforma" src="https://img.shields.io/badge/plataforma-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0078d4?style=flat">
 </p>
 
 <p align="center">
@@ -52,7 +52,7 @@ Tu **agente de IA** (Claude Code, Codex, OpenCode o Antigravity) entiende lo que
 
 | Necesitas | Para qué | ¿Lo tengo? |
 |---|---|---|
-| **Windows** | Probado en Windows 11 (el puente es Python y podría ir en Mac/Linux, sin probar) | — |
+| **Windows, macOS o Linux** | Probado a fondo en Windows 11; macOS y Linux están soportados pero todavía sin probar en un equipo real | — |
 | **Blender 4.2 o superior** | Donde se crea la escena. Probado con **5.2 LTS** | [blender.org](https://www.blender.org/download/) (gratis) |
 | **Un agente de IA** | Entender tu pedido | Ver el [paso 2](#2-elige-tu-agente-de-ia) |
 | **Python 3.8+** (opcional) | Si no lo tienes, se usa el que trae Blender | `python --version` |
@@ -75,10 +75,16 @@ Descárgalo gratis desde **[blender.org](https://www.blender.org/download/)** e 
 
 ### 3. Instala blender-steroids
 
-Abre **PowerShell** y pega:
+**Windows**: abre **PowerShell** y pega:
 
 ```powershell
 irm https://raw.githubusercontent.com/kennedy122112/blender-steroids/main/install.ps1 | iex
+```
+
+**macOS / Linux**: abre la **Terminal** y pega:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kennedy122112/blender-steroids/main/install.sh | bash
 ```
 
 Lo descarga en `~/.blender-steroids` y lo enlaza en cada agente que tengas instalado.
@@ -111,6 +117,9 @@ blender-steroids y Blender son gratuitos y de código abierto. Tu agente de IA p
 **¿Mis datos salen de mi computadora?**
 blender-steroids habla con Blender en tu PC por un puerto local (solo acepta conexiones de tu propia máquina). Pero tu agente de IA envía lo que escribes, y lo que lee de tu escena, al proveedor de su modelo.
 
+**¿Funciona en Mac o Linux?**
+Sí: el add-on y el puente son Python y hay instalador para los dos (`install.sh`). Busca Blender en `/Applications` (o `~/Applications`) en macOS, y en el paquete, snap, `/opt` o la carpeta descomprimida en tu carpeta personal en Linux. Todavía no se ha probado en un equipo real: si algo falla, abre un *issue*.
+
 **¿Tengo que tener Blender abierto?**
 No. Con un archivo `.blend` el agente trabaja sin interfaz, en segundo plano. Abierto es mejor para ver los cambios al momento.
 
@@ -132,7 +141,7 @@ Está pensado para modelado por piezas (hard-surface, mobiliario, producto, maqu
 
 ## ⚠️ Limitaciones
 
-- Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD).
+- Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD). macOS y Linux: soportados, sin probar todavía en un equipo real.
 - El modelado declarativo cubre primitivas, mallas por vértices, texto, modificadores, materiales Principled, luces, cámaras y animación por fotogramas clave. Nodos de geometría, rigs, partículas y físicas van por código `bpy` (`exec`).
 - Si el spec cambia la forma de un objeto, su malla se rehace y se pierden ediciones hechas a mano en ella.
 - En vivo, un `build` grande bloquea Blender mientras se ejecuta (segundos).
@@ -149,7 +158,9 @@ cd blender-steroids
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Si el repositorio queda fuera de `~/.blender-steroids`, el instalador crea ese enlace hacia él. `-Uninstall` quita los enlaces sin borrar archivos. El add-on se instala aparte con `blender-cli setup` (lo hace el agente).
+En macOS o Linux, `bash install.sh` (y `--uninstall`).
+
+Si el repositorio queda fuera de `~/.blender-steroids`, el instalador crea ese enlace hacia él. `-Uninstall` / `--uninstall` quita los enlaces sin borrar archivos. El add-on se instala aparte con `blender-cli setup` (lo hace el agente).
 
 ### Skills
 
@@ -162,7 +173,7 @@ Si el repositorio queda fuera de `~/.blender-steroids`, el instalador crea ese e
 
 ### blender-cli
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File bin/blender-cli.ps1 <comando>` (o `python bin/blender_cli.py <comando>`). Toda salida es JSON. Con `-File x.blend` cualquier comando trabaja sin interfaz.
+Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File bin/blender-cli.ps1 <comando>`; macOS/Linux: `bash bin/blender-cli <comando>` (o en cualquiera, `python3 bin/blender_cli.py <comando>`). Las opciones valen como `-Path x` o `--path x`. Toda salida es JSON. Con `-File x.blend` cualquier comando trabaja sin interfaz.
 
 | Comando | Para qué |
 |---|---|
@@ -184,9 +195,9 @@ El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-mo
 |---|---|
 | `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
-| `bin/blender_cli.py`, `bin/blender-cli.ps1` | El puente del agente y su lanzador |
+| `bin/blender_cli.py`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
 | `skills/` | Las cuatro skills (`SKILL.md`) |
-| `install.ps1` | Instalador para todos los agentes |
+| `install.ps1`, `install.sh` | Instalador para todos los agentes (Windows, macOS/Linux) |
 
 ### Notas de la API de Blender aprendidas (5.2)
 

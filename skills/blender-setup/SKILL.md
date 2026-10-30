@@ -9,9 +9,12 @@ blender-steroids controla **Blender** en local con su API de Python (`bpy`). No 
 ni nube. Hay dos piezas:
 
 - **blender-cli**, el puente que ejecutas tú. En el resto de las skills de Blender, **blender-cli** significa:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.blender-steroids\bin\blender-cli.ps1" <comando> ...`
-  (desde bash/Git Bash: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE/.blender-steroids/bin/blender-cli.ps1" <comando> ...`).
-  Usa el Python de la PC o, si no hay, el que trae Blender. Toda salida es JSON por stdout.
+  - **Windows**: `powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.blender-steroids\bin\blender-cli.ps1" <comando> ...`
+    (desde bash/Git Bash: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE/.blender-steroids/bin/blender-cli.ps1" <comando> ...`).
+  - **macOS y Linux**: `bash ~/.blender-steroids/bin/blender-cli <comando> ...`
+
+  Usa el Python de la máquina o, si no hay, el que trae Blender. Las opciones valen en los dos estilos
+  (`-Path x` o `--path x`). Toda salida es JSON por stdout.
 - **El add-on `blender_steroids`**, que corre dentro de Blender y abre el puerto local `127.0.0.1:9777`
   por el que blender-cli le habla. Tiene un panel en la Vista 3D → barra lateral (N) → «Steroids».
 
@@ -19,7 +22,8 @@ ni nube. Hay dos piezas:
 `blender-cli status`:
 - `blender: null` → no está instalado. Pídele al usuario que lo instale desde blender.org (gratis;
   probado con **Blender 5.2 LTS**, sirve desde 4.2) y espera. Si lo tiene en otra carpeta, define
-  la variable `BLENDER_STEROIDS_BLENDER` con la ruta de `blender.exe`.
+  la variable `BLENDER_STEROIDS_BLENDER` con la ruta del ejecutable (`blender.exe` en Windows;
+  `/Applications/Blender.app/Contents/MacOS/Blender` en macOS; `blender` en Linux).
 - `addonInstalled: false` → paso 2.
 - `bridge: true` → listo: Blender abierto y respondiendo; informa el archivo y qué hay en la escena.
 
@@ -27,7 +31,8 @@ ni nube. Hay dos piezas:
 `blender-cli setup` enlaza el add-on en la carpeta de complementos del usuario de esa versión de
 Blender y lo deja activado en sus preferencias (es un enlace: actualizar blender-steroids lo actualiza).
 Si devuelve `note` (Blender ya estaba abierto), ese Blender no lo cargó todavía: dile al usuario que
-lo cierre y lo abra de nuevo, o que lo active en *Edición > Preferencias > Complementos*.
+lo cierre y lo abra de nuevo, o que lo active en *Edición > Preferencias > Complementos*
+(en macOS: *Blender > Preferencias > Complementos*).
 
 ## 3. Abrir Blender listo para trabajar
 - Si el usuario ya tiene Blender abierto con el add-on activo, `status` da `bridge: true` y no hay que hacer nada.
