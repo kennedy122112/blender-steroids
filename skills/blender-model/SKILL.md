@@ -45,12 +45,14 @@ lejos si no lees la referencia antes. Ve en este orden.
 5. **Lista de control** en cada vuelta: `blender-cli check` (abajo) para piezas flotando, enterradas
    o atravesadas; mira también `-View back` y `right`; proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
    `"look": "AgX - Punchy"`), legibilidad de la cara, nada tapado por la cámara.
-6. **Corrige con medidas, una cosa por vuelta.** Usa `widthByGuide*` y `zByGuide` de `compare`: si la
-   referencia mide 0.61 y el render 0.75 en la guía 7, y esa guía es z 0.60–0.71 m, la pieza a cambiar es
-   la que está a esa altura (no la que sospeches). Anota el `silhouetteIoU` de cada vuelta: si sube, la
+6. **Corrige con medidas, una cosa por vuelta.** Usa `widthByGuide*`, `zByGuide` y `edgesByGuide` de
+   `compare`: si en la guía 4 la referencia mide 0.65 y el render 0.50, esa guía está a z 0.44 m y su
+   borde derecho es `MangaD`, la pieza a cambiar es esa (no la que sospeches). Anota el `silhouetteIoU` de cada vuelta: si sube, la
    vuelta sirvió; si baja, deshaz ese cambio.
 7. Repite 4-6 hasta que el IoU deje de subir (menos de 0.01 por vuelta) o las diferencias sean de
-   detalle, y dile al usuario cuáles quedan y el IoU final. Una figura de vinilo bien bloqueada suele
+   detalle, y dile al usuario cuáles quedan y el IoU final. **Diferencias a propósito**: si haces un
+   personaje original inspirado en la referencia, algunas guías no van a coincidir por diseño (otros
+   cuernos, otra cola). Anótalas al empezar y no las persigas; mide el progreso en las demás. Una figura de vinilo bien bloqueada suele
    quedar en 0.85-0.90; por encima, las diferencias son de forma esculpida, no de proporción.
 
 **Límite honesto**: con primitivas y código se logra muy bien lo hecho de piezas (productos,
@@ -111,6 +113,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
+| `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
 | `decal` | `size`: número o `[ancho, alto]`. Pintura plana (ojos, mejillas, manchas, logos, parches) que se pega con `attach` a la superficie y sigue su curvatura |
 | `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida que no salen de lo anterior). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |

@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.4.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.5.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -28,7 +28,7 @@
 
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
-- 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
+- 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
 - 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave.
 - 👀 **Se revisa a sí mismo**: renderiza vistas de control (iso, frente, arriba...) y corrige lo que se ve mal antes de entregarte.

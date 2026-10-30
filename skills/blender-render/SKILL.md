@@ -38,18 +38,23 @@ con guías cada 10 % del alto de la figura. Y medidas en `alignment`:
 - `aspectReference` / `aspectRender`: ancho/alto de la figura.
 - `widthByGuideReference` / `widthByGuideRender`: ancho de la figura en cada décimo de su alto, de
   abajo arriba, en fracción del alto. Compáralos guía a guía: «en la 7 la referencia mide 0.61 y el render 0.54».
-- `zByGuide`: la altura del mundo (m) de cada guía, de la 0 (base de la figura) a la 10 (lo más alto).
-  Traduce «la guía 7 está ancha» a «lo que hay entre z 0.60 y 0.71 m está ancho».
+- `zByGuide`: la altura del mundo (m) de lo que se ve en cada décimo de la figura (10 valores, de abajo
+  arriba), calculada con los vértices reales proyectados por la cámara, así que vale en perspectiva.
+- `edgesByGuide`: en cada décimo, qué pieza forma el borde izquierdo y cuál el derecho. Es la respuesta
+  directa a «¿qué hace ancha esta guía?».
 
 **Ángulo de cámara**: usa `-View` con el lado de la referencia si lo sabes (`front`, `iso`, `"0.5,-1,0.2"`).
 Si no, `-FitView` prueba 33 ángulos (azimut -75° a 75°, elevación 0-30°) con renders rápidos de silueta y
-usa el que más se parece; `fitView` en la respuesta dice cuál y los tres mejores. Tarda ~35 s. En figuras
-casi simétricas la silueta distingue poco el ángulo (los mejores difieren en centésimas): entonces
-elige tú el que corresponda a la referencia mirando la imagen.
+usa el que más se parece; `fitView` en la respuesta dice cuál y los tres mejores. Tarda ~35 s. Funciona
+bien con figuras asimétricas (una cola o un arma de un lado). En figuras casi simétricas la silueta
+distingue poco el ángulo (los mejores difieren en centésimas): entonces elige tú el lado mirando la
+imagen (hacia dónde apunta el hocico, qué brazo se ve más).
 
 `-NoAlign` (sin alinear), `-NoOverlay` (sin panel de siluetas), `-NoGuides`. Úsalo en cada vuelta de un
 trabajo con referencia (ver `blender-model`) y describe las diferencias con estas medidas, no de memoria.
-Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista.
+Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista y sin
+iconos ni gizmos cerca de la figura: compare se queda con la región más grande, pero un icono pegado a
+la figura en la misma fila la ensancha (se ve como rayas cian en el panel de siluetas).
 
 ## Animación
 `blender-cli render -Path carpeta/toma.png -Animation [-Frames 1-120]` deja `toma_0001.png`,
