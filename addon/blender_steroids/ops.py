@@ -13,7 +13,7 @@ import math
 import os
 import sys
 import traceback
-from mathutils import Vector
+from mathutils import Euler, Vector
 
 # ----------------------------------------------------------------------------------- utilidades
 
@@ -243,10 +243,11 @@ def op_scene(args):
 
 GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 'subdivisions',
              'majorRadius', 'minorRadius', 'minorSegments', 'fill', 'vertices', 'edges', 'faces',
-             'origin', 'xSegments', 'ySegments')
+             'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
+             'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
-              'torus', 'circle', 'monkey', 'mesh'}
+              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal'}
 
 
 def _fit(bm, target):
@@ -273,6 +274,162 @@ def _torus(bm, R, r, M, N):
             a, b = rows[i][j], rows[(i + 1) % M][j]
             c, d = rows[(i + 1) % M][(j + 1) % N], rows[i][(j + 1) % N]
             bm.faces.new((a, b, c, d))
+
+
+def _curve_points(o):
+    """Puntos de un tubo: `points` tal cual, o `curve` = [p0, p1, p2(, p3)] como Bézier (`segments` tramos)."""
+    if o.get('curve'):
+        c = [Vector(vec3(p)) for p in o['curve']]
+        n = int(o.get('steps', 24))
+        out = []
+        for k in range(n + 1):
+            t = k / n
+            if len(c) == 3:
+                out.append((1 - t) ** 2 * c[0] + 2 * (1 - t) * t * c[1] + t * t * c[2])
+            else:
+                out.append((1 - t) ** 3 * c[0] + 3 * (1 - t) ** 2 * t * c[1] + 3 * (1 - t) * t * t * c[2]
+                           + t ** 3 * c[3])
+        return out
+    return [Vector(vec3(p)) for p in o.get('points', [])]
+
+
+def _radii(o, n):
+    """Radio por punto: `radii` lista (se interpola si tiene otro largo) o [inicio, fin], o `radius`."""
+    rr = o.get('radii')
+    if rr is None:
+        return [float(o.get('radius', 0.05))] * n
+    rr = [float(x) for x in rr]
+    if len(rr) == n:
+        return rr
+    out = []
+    for k in range(n):
+        t = k / max(1, n - 1) * (len(rr) - 1)
+        i = min(int(t), len(rr) - 2)
+        out.append(rr[i] + (rr[i + 1] - rr[i]) * (t - i))
+    return out
+
+
+def _tube(bm, o):
+    """Tubo por una curva con radio variable: colas, cuernos, mechones, cables, asas, tentáculos.
+    `flat` < 1 lo aplana (cintas, hojas); `twist` gira la sección (grados de inicio a fin)."""
+    pts = _curve_points(o)
+    if len(pts) < 2:
+        raise ValueError('tube necesita al menos 2 puntos (points o curve)')
+    seg = int(o.get('segments', 16))
+    radii = _radii(o, len(pts))
+    flat = float(o.get('flat', 1.0))
+    twist = math.radians(float(o.get('twist', 0.0)))
+    up = Vector(vec3(o.get('up', (0, 0, 1))))
+    rings, prev_side = [], None
+    for i, p in enumerate(pts):
+        tg = (pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)]).normalized()
+        if prev_side is None:
+            side = tg.cross(up)
+            if side.length < 1e-4:
+                side = tg.cross(Vector((1, 0, 0)))
+        else:   # transporte paralelo: la sección no se retuerce sola en las curvas
+            side = prev_side - tg * prev_side.dot(tg)
+        side.normalize()
+        prev_side = side
+        nrm = side.cross(tg).normalized()
+        a0 = twist * i / max(1, len(pts) - 1)
+        ring = []
+        for j in range(seg):
+            a = 2 * math.pi * j / seg
+            x, y = math.cos(a) * radii[i], math.sin(a) * radii[i] * flat
+            ring.append(bm.verts.new(p + (x * math.cos(a0) - y * math.sin(a0)) * side
+                                     + (x * math.sin(a0) + y * math.cos(a0)) * nrm))
+        rings.append(ring)
+    for r0, r1 in zip(rings, rings[1:]):
+        for j in range(seg):
+            bm.faces.new((r0[j], r0[(j + 1) % seg], r1[(j + 1) % seg], r1[j]))
+    if o.get('cap', True):
+        for ring, p in ((rings[0], pts[0]), (rings[-1], pts[-1])):
+            c = bm.verts.new(p)
+            for j in range(seg):
+                bm.faces.new((c, ring[j], ring[(j + 1) % seg]))
+
+
+def _lathe(bm, o):
+    """Perfil girado alrededor de Z: `profile` = [[radio, z], ...] de abajo arriba (jarrones, troncos,
+    botellas, peones, lámparas). Un radio 0 cierra en un punto."""
+    prof = [(float(r), float(z)) for r, z in o['profile']]
+    seg = int(o.get('segments', 48))
+    rings = []
+    for r, z in prof:
+        if r < 1e-6:
+            rings.append([bm.verts.new((0, 0, z))])
+        else:
+            rings.append([bm.verts.new((r * math.cos(2 * math.pi * j / seg), r * math.sin(2 * math.pi * j / seg), z))
+                          for j in range(seg)])
+    for r0, r1 in zip(rings, rings[1:]):
+        if len(r0) == 1 and len(r1) == 1:
+            continue
+        for j in range(seg):
+            if len(r0) == 1:
+                bm.faces.new((r0[0], r1[j], r1[(j + 1) % seg]))
+            elif len(r1) == 1:
+                bm.faces.new((r0[j], r0[(j + 1) % seg], r1[0]))
+            else:
+                bm.faces.new((r0[j], r0[(j + 1) % seg], r1[(j + 1) % seg], r1[j]))
+    if o.get('cap', True):
+        for ring in (rings[0], rings[-1]):
+            if len(ring) > 1:
+                bm.faces.new(ring)
+
+
+def _superellipsoid(bm, o):
+    """Caja redondeada / esfera / almohada: `size` [x, y, z] total y `roundness` [lados, arriba-abajo]
+    entre 0 (caja) y 1 (elipsoide); >1 la vuelve más puntiaguda. Cabezas y cuerpos de vinilo, cojines, rocas."""
+    sx, sy, sz = vec3(o.get('size', 1.0), (1, 1, 1))
+    rd = o.get('roundness', 0.5)
+    e2, e1 = (rd, rd) if isinstance(rd, (int, float)) else (rd[0], rd[1])
+    e1, e2 = max(0.08, float(e1)), max(0.08, float(e2))
+    nu, nv = int(o.get('segments', 64)), int(o.get('rings', 32))
+
+    def f(w, e):
+        return math.copysign(abs(w) ** e, w)
+    rows = []
+    for i in range(1, nv):
+        v = -math.pi / 2 + math.pi * i / nv
+        rows.append([bm.verts.new((sx / 2 * f(math.cos(v), e1) * f(math.cos(u), e2),
+                                   sy / 2 * f(math.cos(v), e1) * f(math.sin(u), e2),
+                                   sz / 2 * f(math.sin(v), e1)))
+                     for u in (2 * math.pi * j / nu for j in range(nu))])
+    for r0, r1 in zip(rows, rows[1:]):
+        for j in range(nu):
+            bm.faces.new((r0[j], r0[(j + 1) % nu], r1[(j + 1) % nu], r1[j]))
+    bot, top = bm.verts.new((0, 0, -sz / 2)), bm.verts.new((0, 0, sz / 2))
+    for j in range(nu):
+        bm.faces.new((bot, rows[0][(j + 1) % nu], rows[0][j]))
+        bm.faces.new((top, rows[-1][j], rows[-1][(j + 1) % nu]))
+
+
+def _blobby(o, name):
+    """Forma orgánica de bolas que se funden (metaballs) convertida en malla: `balls` =
+    [[x, y, z, radio], ...] o [{"at": [x, y, z], "radius": r, "size": [sx, sy, sz]}]."""
+    mb = bpy.data.metaballs.new(name + '_meta')
+    mb.resolution = mb.render_resolution = float(o.get('resolution', 0.02))
+    mb.threshold = float(o.get('threshold', 0.6))
+    for b in o['balls']:
+        e = mb.elements.new()
+        if isinstance(b, dict):
+            e.co, e.radius = vec3(b['at']), float(b.get('radius', 0.1))
+            if b.get('size'):
+                e.type = 'ELLIPSOID'
+                e.size_x, e.size_y, e.size_z = vec3(b['size'])
+        else:
+            e.co, e.radius = b[:3], float(b[3])
+        e.stiffness = 2.0
+    tmp = bpy.data.objects.new(name + '_meta', mb)
+    _scene().collection.objects.link(tmp)
+    bpy.context.view_layer.update()
+    me = bpy.data.meshes.new_from_object(tmp.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(tmp, do_unlink=True)
+    bpy.data.metaballs.remove(mb)
+    if not me.vertices:
+        raise ValueError('blobby no generó superficie: aumenta los radios o baja el threshold')
+    return me
 
 
 def build_mesh(o, name):
@@ -304,6 +461,26 @@ def build_mesh(o, name):
                seg if 'segments' in o else 48, int(o.get('minorSegments', 12)))
     elif t == 'monkey':
         bmesh.ops.create_monkey(bm)
+    elif t == 'tube':
+        _tube(bm, o)
+    elif t == 'lathe':
+        _lathe(bm, o)
+    elif t == 'superellipsoid':
+        _superellipsoid(bm, o)
+    elif t == 'blobby':
+        bm.free()
+        me = _blobby(o, name)
+        if o.get('origin') == 'bottom':
+            zmin = min(v.co.z for v in me.vertices)
+            for v in me.vertices:
+                v.co.z -= zmin
+        me.name = name
+        return me
+    elif t == 'decal':
+        # mancha de pintura: un disco muy fino que attach + shrinkwrap pegan a una superficie
+        w, h = (o.get('size', 0.05),) * 2 if isinstance(o.get('size', 0.05), (int, float)) else o['size'][:2]
+        bmesh.ops.create_uvsphere(bm, u_segments=int(o.get('segments', 40)), v_segments=16, radius=1.0)
+        bmesh.ops.scale(bm, vec=(w / 2, h / 2, float(o.get('thickness', 0.0015))), verts=bm.verts)
     elif t == 'mesh':
         vs = [bm.verts.new(vec3(v)) for v in o.get('vertices', [])]
         for e in o.get('edges', []):
@@ -318,6 +495,9 @@ def build_mesh(o, name):
     if o.get('origin') == 'bottom' and bm.verts:
         zmin = min(v.co.z for v in bm.verts)
         bmesh.ops.translate(bm, vec=(0, 0, -zmin), verts=bm.verts)
+    if t in ('tube', 'lathe', 'superellipsoid'):
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.normal_update()
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
@@ -528,6 +708,87 @@ def _look_at(o, target):
     if d.length > 1e-9:
         o.rotation_mode = 'XYZ'
         o.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
+
+
+SIDES = {'front': (0, -1, 0), 'back': (0, 1, 0), 'left': (-1, 0, 0), 'right': (1, 0, 0), 'top': (0, 0, 1),
+         'bottom': (0, 0, -1)}
+
+
+def surface_hit(target, at, side='front'):
+    """Punto y normal (mundo) de la superficie de `target` (con sus modificadores) vista desde `side`
+    en el punto `at`: se lanza un rayo paralelo a `side` que pasa por `at`. None si no toca."""
+    d = Vector(SIDES[side] if isinstance(side, str) else vec3(side)).normalized()
+    at = Vector(vec3(at))
+    center, radius = _bounds([target])
+    origin = at - d * d.dot(at - center) + d * (radius * 4 + 1)
+    inv = target.matrix_world.inverted()
+    o_l = inv @ origin
+    d_l = (inv.to_3x3() @ -d).normalized()
+    hit, loc, nor, _ = target.ray_cast(o_l, d_l, depsgraph=bpy.context.evaluated_depsgraph_get())
+    if not hit:
+        return None, None
+    return target.matrix_world @ loc, (target.matrix_world.to_3x3().inverted().transposed() @ nor).normalized()
+
+
+def _attach(o, spec, warnings):
+    """Coloca el objeto sobre la superficie de otro: ojos, botones, nubes, remaches, parches.
+    `attach`: {to, side (front|back|left|right|top|bottom|[x,y,z]), at [x,y,z] (punto aproximado, por
+    defecto la location), offset (separación), align (por defecto sí: su eje Z sigue la normal), spin (°)}."""
+    a = spec['attach']
+    tgt = _obj(a['to'])
+    side = a.get('side', 'front')
+    at = a.get('at', spec.get('location', list(o.location)))
+    p, n = surface_hit(tgt, at, side)
+    if p is None:
+        warnings.append('«%s»: no toca a «%s» desde %s en %s' % (o.name, tgt.name, side, at))
+        return
+    off = float(a.get('offset', 0.0))
+    if a.get('align', True):
+        o.rotation_mode = 'XYZ'
+        q = n.to_track_quat('Z', 'Y')
+        if a.get('spin'):
+            q = q @ Euler((0, 0, math.radians(float(a['spin']))), 'XYZ').to_quaternion()
+        o.rotation_euler = q.to_euler()
+    if o.parent:
+        o.location = o.parent.matrix_world.inverted() @ (p + n * off)
+    else:
+        o.location = p + n * off
+    if spec.get('type', '').lower() == 'decal' or a.get('wrap'):
+        # se pega a la curva de la superficie, apilado sobre lo que haya debajo según offset
+        # proyectado por su propio eje Z (la normal): conserva la forma; «el punto más cercano» la
+        # rompía saltando a otras partes del cuerpo
+        m = o.modifiers.get('bs_wrap') or o.modifiers.new('bs_wrap', 'SHRINKWRAP')
+        m.target, m.wrap_method, m.offset = tgt, 'PROJECT', max(off, 0.0005)
+        m.use_project_x = m.use_project_y = False
+        m.use_project_z = True
+        m.use_negative_direction = m.use_positive_direction = True
+        o.modifiers.move(o.modifiers.find('bs_wrap'), 0)
+
+
+def _on_surface(o, spec, warnings):
+    """Tubo dibujado sobre una superficie (boca, líneas de la cara, costuras, ribetes): proyecta cada punto
+    de `points`/`curve` sobre `onSurface.to` desde `side` y rehace la malla."""
+    a = spec['onSurface']
+    tgt = _obj(a['to'])
+    side = a.get('side', 'front')
+    off = float(a.get('offset', 0.0))
+    pts = []
+    for p in _curve_points(spec):
+        q, n = surface_hit(tgt, p, side)
+        if q is not None:
+            pts.append(list(q + n * off))
+    if len(pts) < 2:
+        warnings.append('«%s»: la línea no toca a «%s» desde %s' % (o.name, tgt.name, side))
+        return
+    o.location, o.rotation_euler, o.scale = (0, 0, 0), (0, 0, 0), (1, 1, 1)
+    old = o.data
+    o.data = build_mesh(dict(spec, points=pts, curve=None), o.name)
+    for m in old.materials:
+        o.data.materials.append(m)
+    if spec.get('smooth', True):
+        o.data.shade_smooth()
+    if old.users == 0:
+        bpy.data.meshes.remove(old)
 
 
 def _bounds(objs):
@@ -834,6 +1095,15 @@ def op_build(spec):
                 bpy.context.view_layer.update()
                 _look_at(o, os_['lookAt'])
 
+    # 3ª pasada: colocar sobre superficies ya evaluadas (con sus modificadores), en el orden del spec
+    for o, os_ in objs:
+        if os_.get('attach'):
+            bpy.context.view_layer.update()
+            _attach(o, os_, warnings)
+        if os_.get('onSurface') and o.type == 'MESH':
+            bpy.context.view_layer.update()
+            _on_surface(o, os_, warnings)
+
     bpy.context.view_layer.update()
     for o, os_ in objs:
         if o.type == 'CAMERA' and os_.get('frame'):
@@ -945,6 +1215,66 @@ def op_render(args):
             'size': [int(s.render.resolution_x * pct), int(s.render.resolution_y * pct)]}
 
 
+def op_compose(args):
+    """Pone la referencia y el render lado a lado, a la misma altura, con guías horizontales cada 10 %
+    para comparar proporciones. El fondo transparente de la referencia se rellena de blanco."""
+    import numpy as np
+
+    def cargar(path, h):
+        im = bpy.data.images.load(path, check_existing=False)
+        w0, h0 = im.size
+        if h0 == 0:
+            raise ValueError('No se pudo leer la imagen %s' % path)
+        im.scale(max(1, round(w0 * h / h0)), h)
+        w = im.size[0]
+        px = np.empty(w * h * 4, dtype=np.float32)
+        im.pixels.foreach_get(px)
+        bpy.data.images.remove(im)
+        px = px.reshape(h, w, 4)
+        a = px[..., 3:4]
+        px[..., :3] = px[..., :3] * a + (1 - a)
+        px[..., 3] = 1
+        return px
+
+    h = int(args.get('height', 800))
+    ref, ren = cargar(args['reference'], h), cargar(args['render'], h)
+    gap = 12
+    canvas = np.full((h, ref.shape[1] + gap + ren.shape[1], 4), 0.5, dtype=np.float32)
+    canvas[..., 3] = 1
+    canvas[:, :ref.shape[1]] = ref
+    canvas[:, ref.shape[1] + gap:] = ren
+    if args.get('guides', True):
+        for k in range(1, 10):
+            y = int(h * k / 10)
+            canvas[y, :, :3] = canvas[y, :, :3] * 0.4 + np.array([0.0, 0.75, 1.0]) * 0.6
+    out = os.path.abspath(args['path'])
+    img = bpy.data.images.new('bs_compare', canvas.shape[1], h, alpha=False)
+    img.pixels.foreach_set(canvas.ravel())
+    img.filepath_raw = out
+    img.file_format = 'PNG'
+    img.save()
+    return {'image': out, 'size': [canvas.shape[1], h], 'left': 'referencia', 'right': 'render'}
+
+
+def op_compare(args):
+    """Render con el encuadre de la referencia (mismo formato de imagen) y la composición lado a lado."""
+    ref = bpy.data.images.load(os.path.abspath(args['reference']), check_existing=False)
+    rw, rh = ref.size
+    bpy.data.images.remove(ref)
+    if not rw or not rh:
+        raise ValueError('No se pudo leer la referencia %s' % args['reference'])
+    k = 900 / max(rw, rh)
+    s = _scene()
+    s.render.resolution_x, s.render.resolution_y = max(16, round(rw * k)), max(16, round(rh * k))
+    s.render.resolution_percentage = 100
+    out = os.path.abspath(args['path'])
+    tmp = os.path.splitext(out)[0] + '_render.png'
+    r = op_render(dict(args, path=tmp, percentage=100))
+    c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
+                    'height': int(args.get('height', 800)), 'guides': args.get('guides', True)})
+    return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
+
+
 def op_export(args):
     path = os.path.abspath(args['path'])
     ext = os.path.splitext(path)[1].lower()
@@ -987,6 +1317,8 @@ OPS = {
     'open': op_open,
     'render': op_render,
     'export': op_export,
+    'compare': op_compare,
+    'compose': op_compose,
 }
 
 

@@ -21,6 +21,41 @@ Requiere conexión (`blender-connect`): en vivo o con `-File`. **blender-cli** e
    `-Objects a,b` para acercarte a una pieza. Corrige piezas flotando, atravesadas o fuera de escala.
 5. Cuéntale al usuario qué creó (por colección) y, si trabajaste sin interfaz, dónde quedó el `.blend`.
 
+## Con una imagen de referencia
+Cuando el usuario pasa una imagen (o varias), no empieces por los detalles: el primer intento sale
+lejos si no lees la referencia antes. Ve en este orden.
+
+1. **Lee la referencia y escribe sus datos** (en tu respuesta o en un comentario del spec) antes de modelar:
+   - **Proporciones**, medidas en la imagen: alto total; qué porcentaje del alto ocupa cada bloque
+     (cabeza, torso, piernas); ancho de la cabeza contra el del cuerpo. Una figura de vinilo tiene la
+     cabeza en ~45-55 % del alto; un personaje realista, en ~13 %.
+   - **Silueta**: las 3-6 formas grandes que la definen (cabeza cuadrada redondeada, cuerpo en
+     campana, alas abiertas…) y qué primitiva usarás para cada una.
+   - **Paleta** en hex, de 4 a 8 colores, con el material de cada uno (vinilo satinado, tela mate, metal).
+   - **Puntos clave**: dónde caen los ojos (altura dentro de la cabeza, separación), accesorios, bordes.
+   - **Estilo y luz**: figura de vinilo, toon, realista; fondo y dirección de la luz principal.
+2. **Boceto de bloques**: solo las formas grandes con su color plano. Compara (paso 4) y ajusta
+   proporciones y silueta **hasta que coincidan** antes de agregar cualquier detalle.
+3. **Detalles** de lo grande a lo pequeño: accesorios, después la cara (calcomanías con `attach`,
+   líneas con `onSurface`), al final materiales finos y luz.
+4. **Compara de verdad**, no de memoria: `blender-cli compare -Reference ref.png -Path comparar.png
+   [-View front]` renderiza con el formato de la referencia y pone las dos imágenes lado a lado con
+   guías horizontales cada 10 % del alto. Léela y anota diferencias concretas («la cabeza llega a la
+   guía 3 en la referencia y a la 4 en el render»). Usa la vista que coincida con la de la referencia.
+5. **Lista de control** en cada vuelta: piezas flotando o atravesadas (mira también `-View back` y
+   `right`), proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
+   `"look": "AgX - Punchy"`), legibilidad de la cara, nada tapado por la cámara.
+6. Repite 4-5 hasta que las diferencias sean de detalle, y dile al usuario cuáles quedan.
+
+**Límite honesto**: con primitivas y código se logra muy bien lo hecho de piezas (productos,
+mobiliario, figuras de vinilo, mascotas simples, maquetas). Una referencia esculpida, con anatomía
+compleja o detalle fino, no se iguala; dilo al empezar y propón partir de un modelo base importado
+(`.glb`/`.fbx`/`.obj`) que el agente luego viste, pinta, ilumina y renderiza.
+
+**Personajes de terceros**: si la referencia es un personaje con derechos de autor (de anime,
+videojuegos, películas, marcas), no lo reproduzcas; propón un personaje original inspirado en el
+estilo (proporciones, paleta, tipo de accesorios) y constrúyelo con este mismo flujo.
+
 ## Spec JSON
 ```json
 {
@@ -66,7 +101,12 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `torus` | `majorRadius`, `minorRadius`, `segments`, `minorSegments` |
 | `circle` | `radius`, `segments`, `fill` |
 | `monkey` | — |
-| `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida: perfiles, rampas, techos, tubos que siguen una curva, superelipsoides). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
+| `superellipsoid` | `size: [x, y, z]` total, `roundness`: número o `[lados, arriba-abajo]`, 0 = caja, 1 = elipsoide, >1 puntiaguda. Cabezas y cuerpos de vinilo, cojines, piedras, jabones |
+| `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
+| `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas |
+| `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
+| `decal` | `size`: número o `[ancho, alto]`. Pintura plana (ojos, mejillas, manchas, logos, parches) que se pega con `attach` a la superficie y sigue su curvatura |
+| `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida que no salen de lo anterior). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |
 | `light` | `light`: point/sun/spot/area, `energy` (W; sol: intensidad ~3-5), `color`, `size`, `spotSize`° , `spotBlend` |
 | `camera` | `lens` (mm), `ortho` + `orthoScale`, `focus` (objeto o distancia) + `fstop`, `active` (por defecto sí) |
@@ -77,6 +117,23 @@ Comunes a todos: `location` [m], `rotation` [grados XYZ], `scale`, `dimensions` 
 `materials` + `faceMaterials` (índice por cara), `collection`, `parent` (la `location` que das es la del
 mundo), `smooth`, `hidden`, `hideRender`, `display` (wire, solid…), `lookAt` (objeto o `[x,y,z]`;
 con `track: true` lo sigue siempre), `cutter: true` (pieza para restar: alámbrica y fuera del render).
+
+### Colocar sobre superficies (`attach`, `onSurface`)
+No calcules a ojo dónde queda la superficie de una pieza curva: deja que blender-cli la encuentre.
+- **`attach`** apoya un objeto en la superficie de otro (con sus modificadores ya aplicados):
+  `"attach": { "to": "Cabeza", "side": "front", "at": [0.1, 0, 0.6], "offset": 0.001, "align": true, "spin": 0 }`.
+  Lanza un rayo desde `side` (`front`, `back`, `left`, `right`, `top`, `bottom` o un vector) que pasa por
+  `at` (punto aproximado; solo cuentan las dos coordenadas perpendiculares a `side`) y pone el objeto en el
+  punto de contacto, separado `offset` y, con `align`, con su eje Z según la normal. Para ojos, botones,
+  remaches, emblemas, cuernos que salen de la piel.
+- **Calcomanías apiladas**: `decal` + `attach`, con un `offset` mayor en cada capa (ojo 0.001, pupila
+  0.002, brillo 0.003) para que no parpadeen. Se proyectan por su propio eje y conservan la forma.
+- **`onSurface`** en un `tube` dibuja la línea sobre la superficie: `"onSurface": { "to": "Cabeza", "side":
+  "front", "offset": 0.003 }` proyecta cada punto de `points`/`curve` (solo cuentan las coordenadas
+  perpendiculares a `side`). Bocas, cejas, líneas de expresión, costuras, ribetes de ropa.
+
+Ejemplo de personaje con todo esto: `examples/pip-farolero.json` (cabeza superelipsoide, cuerpo `blobby`,
+cola y bufanda `tube`, farol `lathe`, cara con `decal` + `attach` y boca con `onSurface`).
 
 **Cámara automática**: `"frame": ["A", "B"]` (o `"all"`) la coloca para que esos objetos entren
 enteros, desde `"view"`: `iso`, `front`, `back`, `right`, `left`, `top` o un vector `[x, y, z]`;

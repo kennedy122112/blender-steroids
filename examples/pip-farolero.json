@@ -1,0 +1,742 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   900,
+   1100
+  ],
+  "samples": 48,
+  "viewTransform": "AgX",
+  "look": "AgX - Punchy",
+  "world": {
+   "color": "#3a3d44",
+   "strength": 0.7
+  }
+ },
+ "materials": [
+  {
+   "name": "Piel",
+   "color": "#2fa39a",
+   "roughness": 0.45,
+   "coat": 0.15
+  },
+  {
+   "name": "Panza",
+   "color": "#f3e2b0",
+   "roughness": 0.5
+  },
+  {
+   "name": "Manchas",
+   "color": "#f2a541",
+   "roughness": 0.45
+  },
+  {
+   "name": "OjoNegro",
+   "color": "#121214",
+   "roughness": 0.2,
+   "coat": 1
+  },
+  {
+   "name": "Brillo",
+   "color": "#ffffff",
+   "roughness": 0.2
+  },
+  {
+   "name": "Mejilla",
+   "color": "#ff7d8a",
+   "roughness": 0.6
+  },
+  {
+   "name": "Bufanda",
+   "color": "#c8323a",
+   "roughness": 0.7,
+   "sheen": 0.3
+  },
+  {
+   "name": "Laton",
+   "color": "#c9a24a",
+   "metallic": 1,
+   "roughness": 0.3
+  },
+  {
+   "name": "Vidrio",
+   "color": "#ffd27a",
+   "transmission": 0.6,
+   "roughness": 0.1,
+   "emission": "#ffb84a",
+   "emissionStrength": 3
+  },
+  {
+   "name": "Base",
+   "color": "#1b1c20",
+   "roughness": 0.25,
+   "coat": 0.6
+  }
+ ],
+ "collections": [
+  "Pip",
+  "Cara",
+  "Farol",
+  "Escena"
+ ],
+ "objects": [
+  {
+   "name": "Base",
+   "type": "cylinder",
+   "radius": 0.36,
+   "depth": 0.05,
+   "origin": "bottom",
+   "segments": 96,
+   "material": "Base",
+   "collection": "Escena",
+   "modifiers": [
+    {
+     "type": "bevel",
+     "width": 0.01,
+     "segments": 3
+    }
+   ]
+  },
+  {
+   "name": "Cuerpo",
+   "type": "blobby",
+   "collection": "Pip",
+   "material": "Piel",
+   "smooth": true,
+   "resolution": 0.015,
+   "balls": [
+    {
+     "at": [
+      0,
+      0,
+      0.24
+     ],
+     "radius": 0.2,
+     "size": [
+      1,
+      0.9,
+      1.1
+     ]
+    },
+    {
+     "at": [
+      -0.09,
+      -0.02,
+      0.1
+     ],
+     "radius": 0.09
+    },
+    {
+     "at": [
+      0.09,
+      -0.02,
+      0.1
+     ],
+     "radius": 0.09
+    },
+    {
+     "at": [
+      -0.1,
+      -0.06,
+      0.07
+     ],
+     "radius": 0.08,
+     "size": [
+      1,
+      1.4,
+      0.6
+     ]
+    },
+    {
+     "at": [
+      0.1,
+      -0.06,
+      0.07
+     ],
+     "radius": 0.08,
+     "size": [
+      1,
+      1.4,
+      0.6
+     ]
+    },
+    {
+     "at": [
+      -0.16,
+      -0.06,
+      0.26
+     ],
+     "radius": 0.065
+    },
+    {
+     "at": [
+      0.17,
+      -0.08,
+      0.24
+     ],
+     "radius": 0.065
+    },
+    {
+     "at": [
+      -0.12,
+      -0.04,
+      0.29
+     ],
+     "radius": 0.07
+    },
+    {
+     "at": [
+      0.13,
+      -0.06,
+      0.27
+     ],
+     "radius": 0.07
+    }
+   ]
+  },
+  {
+   "name": "PanzaPip",
+   "type": "decal",
+   "size": [
+    0.19,
+    0.2
+   ],
+   "material": "Panza",
+   "collection": "Pip",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "at": [
+     0,
+     0,
+     0.27
+    ],
+    "offset": 0.001
+   }
+  },
+  {
+   "name": "Cola",
+   "type": "tube",
+   "curve": [
+    [
+     0,
+     0.12,
+     0.12
+    ],
+    [
+     0.1,
+     0.42,
+     0.04
+    ],
+    [
+     0.32,
+     0.36,
+     0.2
+    ]
+   ],
+   "steps": 28,
+   "radii": [
+    0.075,
+    0.012
+   ],
+   "segments": 20,
+   "material": "Piel",
+   "collection": "Pip",
+   "smooth": true
+  },
+  {
+   "name": "Cabeza",
+   "type": "superellipsoid",
+   "size": [
+    0.5,
+    0.4,
+    0.38
+   ],
+   "roundness": [
+    0.45,
+    0.6
+   ],
+   "location": [
+    0,
+    -0.01,
+    0.58
+   ],
+   "material": "Piel",
+   "collection": "Pip",
+   "smooth": true,
+   "modifiers": [
+    {
+     "type": "subsurf",
+     "levels": 1
+    }
+   ]
+  },
+  {
+   "name": "CrestaI",
+   "type": "tube",
+   "curve": [
+    [
+     -0.08,
+     0.02,
+     0.74
+    ],
+    [
+     -0.13,
+     0.06,
+     0.82
+    ],
+    [
+     -0.2,
+     0.12,
+     0.84
+    ]
+   ],
+   "radii": [
+    0.035,
+    0.004
+   ],
+   "material": "Manchas",
+   "collection": "Pip",
+   "smooth": true
+  },
+  {
+   "name": "CrestaD",
+   "type": "tube",
+   "curve": [
+    [
+     0.08,
+     0.02,
+     0.74
+    ],
+    [
+     0.13,
+     0.06,
+     0.82
+    ],
+    [
+     0.2,
+     0.12,
+     0.84
+    ]
+   ],
+   "radii": [
+    0.035,
+    0.004
+   ],
+   "material": "Manchas",
+   "collection": "Pip",
+   "smooth": true
+  },
+  {
+   "name": "OjoI",
+   "type": "decal",
+   "size": [
+    0.075,
+    0.09
+   ],
+   "material": "OjoNegro",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     -0.1,
+     0,
+     0.6
+    ],
+    "offset": 0.001
+   }
+  },
+  {
+   "name": "OjoD",
+   "type": "decal",
+   "size": [
+    0.075,
+    0.09
+   ],
+   "material": "OjoNegro",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     0.1,
+     0,
+     0.6
+    ],
+    "offset": 0.001
+   }
+  },
+  {
+   "name": "BrilloI",
+   "type": "decal",
+   "size": 0.025,
+   "material": "Brillo",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     -0.115,
+     0,
+     0.625
+    ],
+    "offset": 0.0025
+   }
+  },
+  {
+   "name": "BrilloD",
+   "type": "decal",
+   "size": 0.025,
+   "material": "Brillo",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     0.085,
+     0,
+     0.625
+    ],
+    "offset": 0.0025
+   }
+  },
+  {
+   "name": "MejillaI",
+   "type": "decal",
+   "size": [
+    0.06,
+    0.035
+   ],
+   "material": "Mejilla",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     -0.17,
+     0,
+     0.53
+    ],
+    "offset": 0.001
+   }
+  },
+  {
+   "name": "MejillaD",
+   "type": "decal",
+   "size": [
+    0.06,
+    0.035
+   ],
+   "material": "Mejilla",
+   "collection": "Cara",
+   "attach": {
+    "to": "Cabeza",
+    "at": [
+     0.17,
+     0,
+     0.53
+    ],
+    "offset": 0.001
+   }
+  },
+  {
+   "name": "Sonrisa",
+   "type": "tube",
+   "curve": [
+    [
+     -0.045,
+     0,
+     0.535
+    ],
+    [
+     0,
+     0,
+     0.5
+    ],
+    [
+     0.045,
+     0,
+     0.535
+    ]
+   ],
+   "radius": 0.005,
+   "material": "OjoNegro",
+   "collection": "Cara",
+   "onSurface": {
+    "to": "Cabeza",
+    "side": "front",
+    "offset": 0.003
+   }
+  },
+  {
+   "name": "Bufanda",
+   "type": "tube",
+   "radius": 0.032,
+   "flat": 0.55,
+   "segments": 16,
+   "cap": false,
+   "points": [
+    [
+     0.19,
+     0,
+     0.42
+    ],
+    [
+     0.134,
+     -0.13,
+     0.42
+    ],
+    [
+     0,
+     -0.185,
+     0.415
+    ],
+    [
+     -0.134,
+     -0.13,
+     0.42
+    ],
+    [
+     -0.19,
+     0,
+     0.42
+    ],
+    [
+     -0.134,
+     0.13,
+     0.42
+    ],
+    [
+     0,
+     0.185,
+     0.425
+    ],
+    [
+     0.134,
+     0.13,
+     0.42
+    ],
+    [
+     0.19,
+     0,
+     0.42
+    ]
+   ],
+   "material": "Bufanda",
+   "collection": "Pip",
+   "smooth": true
+  },
+  {
+   "name": "PuntaBufanda",
+   "type": "tube",
+   "curve": [
+    [
+     0.12,
+     -0.15,
+     0.42
+    ],
+    [
+     0.16,
+     -0.2,
+     0.34
+    ],
+    [
+     0.12,
+     -0.22,
+     0.26
+    ]
+   ],
+   "radii": [
+    0.032,
+    0.026
+   ],
+   "flat": 0.35,
+   "material": "Bufanda",
+   "collection": "Pip",
+   "smooth": true
+  },
+  {
+   "name": "Asa",
+   "type": "torus",
+   "majorRadius": 0.03,
+   "minorRadius": 0.006,
+   "location": [
+    0.22,
+    -0.12000000000000001,
+    0.24
+   ],
+   "rotation": [
+    0,
+    90,
+    0
+   ],
+   "material": "Laton",
+   "collection": "Farol"
+  },
+  {
+   "name": "Farol",
+   "type": "lathe",
+   "segments": 32,
+   "location": [
+    0.22,
+    -0.12000000000000001,
+    0.06
+   ],
+   "collection": "Farol",
+   "profile": [
+    [
+     0,
+     0
+    ],
+    [
+     0.045,
+     0
+    ],
+    [
+     0.05,
+     0.015
+    ],
+    [
+     0.04,
+     0.03
+    ],
+    [
+     0.045,
+     0.09
+    ],
+    [
+     0.035,
+     0.12
+    ],
+    [
+     0.02,
+     0.15
+    ],
+    [
+     0,
+     0.155
+    ]
+   ],
+   "material": "Laton",
+   "smooth": true
+  },
+  {
+   "name": "Llama",
+   "type": "lathe",
+   "segments": 24,
+   "location": [
+    0.22,
+    -0.12000000000000001,
+    0.09
+   ],
+   "collection": "Farol",
+   "profile": [
+    [
+     0,
+     0
+    ],
+    [
+     0.034,
+     0.005
+    ],
+    [
+     0.04,
+     0.03
+    ],
+    [
+     0.036,
+     0.055
+    ],
+    [
+     0,
+     0.065
+    ]
+   ],
+   "material": "Vidrio",
+   "smooth": true
+  },
+  {
+   "name": "LuzFarol",
+   "type": "light",
+   "light": "point",
+   "energy": 6,
+   "color": "#ffb84a",
+   "size": 0.03,
+   "location": [
+    0.22,
+    -0.12000000000000001,
+    0.12
+   ],
+   "collection": "Farol"
+  },
+  {
+   "name": "Key",
+   "type": "light",
+   "light": "area",
+   "energy": 120,
+   "size": 1.2,
+   "location": [
+    1,
+    -1.3,
+    1.5
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.4
+   ],
+   "collection": "Escena"
+  },
+  {
+   "name": "Relleno",
+   "type": "light",
+   "light": "area",
+   "energy": 45,
+   "size": 1.6,
+   "location": [
+    -1.3,
+    -0.9,
+    0.9
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.4
+   ],
+   "collection": "Escena"
+  },
+  {
+   "name": "Contra",
+   "type": "light",
+   "light": "area",
+   "energy": 90,
+   "size": 1,
+   "location": [
+    0.2,
+    1.2,
+    1.3
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.5
+   ],
+   "collection": "Escena"
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "lens": 55,
+   "frame": [
+    "Base",
+    "Cabeza",
+    "CrestaI",
+    "CrestaD",
+    "Cola"
+   ],
+   "view": [
+    0.35,
+    -1,
+    0.3
+   ],
+   "collection": "Escena"
+  }
+ ]
+}

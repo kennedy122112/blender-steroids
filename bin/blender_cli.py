@@ -19,6 +19,9 @@ Uso (toda salida es JSON por stdout):
          [--samples N] [--resolution 1920x1080] [--percentage 50] [--camera nombre] [--frame N]
          [--animation [--frames 1-120]] [--transparent]
   export --path modelo.glb|fbx|obj|stl|ply|usd [--objects a,b]
+  compare --reference ref.png --path lado-a-lado.png [--view front|...] [--objects a,b] [--preview] ...
+                                            render con el formato de la referencia, puesto a su lado con
+                                            guías cada 10 % de alto para comparar proporciones
 
 Con --file la orden se aplica a ese .blend sin interfaz (si no existe, se crea vacío y --save
 lo guarda ahí). render y export, en vivo, trabajan sobre una copia: no congelan tu Blender.
@@ -420,6 +423,22 @@ def cmd_render(a):
     return on_copy('render', {k: v for k, v in args.items() if v not in (None, False)}, a)
 
 
+def cmd_compare(a):
+    ref = os.path.abspath(a.reference)
+    if not os.path.exists(ref):
+        fail('No existe la referencia %s' % ref)
+    args = {'reference': ref, 'path': os.path.abspath(a.path), 'preview': a.preview, 'view': a.view,
+            'engine': a.engine, 'samples': a.samples, 'camera': a.camera, 'frame': a.frame}
+    if a.view and ',' in a.view:
+        args['view'] = [float(x) for x in a.view.strip('[]').split(',')]
+    if a.objects:
+        args['objects'] = [x.strip() for x in a.objects.split(',')]
+    args = {k: v for k, v in args.items() if v not in (None, False)}
+    if a.no_guides:
+        args['guides'] = False
+    return on_copy('compare', args, a)
+
+
 def cmd_export(a):
     args = {'path': os.path.abspath(a.path)}
     if a.objects:
@@ -600,6 +619,17 @@ def main(argv):
     sp = p('export')
     sp.add_argument('--path', required=True)
     sp.add_argument('--objects')
+    sp = p('compare')
+    sp.add_argument('--reference', required=True)
+    sp.add_argument('--path', required=True)
+    sp.add_argument('--view')
+    sp.add_argument('--objects')
+    sp.add_argument('--camera')
+    sp.add_argument('--engine')
+    sp.add_argument('--samples', type=int)
+    sp.add_argument('--frame', type=int)
+    sp.add_argument('--preview', action='store_true')
+    sp.add_argument('--no-guides', '--noguides', dest='no_guides', action='store_true')
     a = ap.parse_args(argv)
     w = copy_warning()
     if w and a.cmd != 'doctor':
@@ -629,6 +659,8 @@ def main(argv):
         res = run('open', {'path': os.path.abspath(a.path)}, a)
     elif a.cmd == 'render':
         res = cmd_render(a)
+    elif a.cmd == 'compare':
+        res = cmd_compare(a)
     else:
         res = cmd_export(a)
     out(res, 0 if res.get('ok') else 1)

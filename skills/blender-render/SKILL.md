@@ -27,6 +27,13 @@ Sin cámara en la escena, se crea una temporal en vista `iso`. Siempre **lee la 
 enseñarla: si algo se ve mal, corrígelo con `blender-model` y vuelve a renderizar.
 Avisa el tiempo antes de un render largo (Cycles a 1080p con 256 muestras puede tardar minutos).
 
+## Comparar con una referencia
+`blender-cli compare -Reference ref.png -Path comparar.png [-View front|...] [-Objects a,b] [-Camera n] [-Preview]`
+renderiza con el mismo formato (proporción) que la referencia y entrega una sola imagen: referencia a
+la izquierda, render a la derecha, a la misma altura y con guías horizontales cada 10 % (`-NoGuides`
+las quita). Deja también el render solo (`render` en la respuesta). Úsalo en cada vuelta de un
+trabajo con referencia (ver `blender-model`) y describe las diferencias por guía, no de memoria.
+
 ## Animación
 `blender-cli render -Path carpeta/toma.png -Animation [-Frames 1-120]` deja `toma_0001.png`,
 `toma_0002.png`... (`pattern` en la respuesta). Para un video, únelos con ffmpeg si está instalado
