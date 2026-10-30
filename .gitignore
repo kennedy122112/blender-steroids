@@ -1,0 +1,6 @@
+*.blend
+*.blend1
+*.png
+*.glb
+*.stl
+__pycache__/

@@ -1,0 +1,40 @@
+{
+  "removeDefaults": true,
+  "scene": {
+    "engine": "eevee",
+    "resolution": [1280, 800],
+    "frames": [1, 96],
+    "world": { "color": "#20242c", "strength": 0.6 }
+  },
+  "materials": [
+    { "name": "Madera", "color": "#8a5a32", "roughness": 0.55 },
+    { "name": "Ceramica", "color": "#f2efe8", "roughness": 0.25, "coat": 0.4 },
+    { "name": "Metal", "color": "#c9ccd1", "metallic": 1, "roughness": 0.3 },
+    { "name": "Piso", "color": "#3a3f47", "roughness": 0.9 }
+  ],
+  "collections": ["Mesa", "Iluminacion"],
+  "objects": [
+    { "name": "Piso", "type": "plane", "size": 8, "material": "Piso" },
+    { "name": "Tablero", "type": "cube", "size": [1.6, 0.9, 0.05], "location": [0, 0, 0.75], "material": "Madera",
+      "collection": "Mesa", "modifiers": [{ "type": "bevel", "width": 0.01, "segments": 3 }] },
+    { "name": "Pata", "type": "cylinder", "radius": 0.03, "depth": 0.73, "origin": "bottom", "location": [-0.72, -0.37, 0],
+      "material": "Metal", "collection": "Mesa", "smooth": true,
+      "modifiers": [{ "type": "mirror", "axis": "XY", "mirrorObject": "Tablero" }] },
+    { "name": "Taza", "type": "cylinder", "radius": 0.045, "depth": 0.1, "origin": "bottom", "segments": 48,
+      "location": [0.3, 0.1, 0.775], "material": "Ceramica", "collection": "Mesa", "smooth": true,
+      "modifiers": [{ "type": "solidify", "thickness": 0.004 }, { "type": "bevel", "width": 0.002, "segments": 2 }] },
+    { "name": "Asa", "type": "torus", "majorRadius": 0.028, "minorRadius": 0.006, "location": [0.35, 0.1, 0.825],
+      "rotation": [90, 0, 0], "material": "Ceramica", "collection": "Mesa", "smooth": true, "parent": "Taza" },
+    { "name": "Rotulo", "type": "text", "text": "blender-steroids", "size": 0.08, "extrude": 0.01, "align": "center",
+      "location": [-0.25, -0.1, 0.776], "material": "Metal", "collection": "Mesa" },
+    { "name": "Key", "type": "light", "light": "area", "energy": 400, "size": 2, "color": "#fff2e0",
+      "location": [2.5, -2.5, 3.5], "lookAt": "Tablero", "collection": "Iluminacion" },
+    { "name": "Rim", "type": "light", "light": "area", "energy": 250, "size": 1.5, "color": "#cfe0ff",
+      "location": [-2.5, 2.5, 2.5], "lookAt": "Tablero", "collection": "Iluminacion" },
+    { "name": "Camara", "type": "camera", "lens": 50, "frame": ["Tablero", "Pata", "Taza"], "view": [1, -1.4, 0.8] }
+  ],
+  "animation": [
+    { "object": "Taza", "property": "rotation", "interpolation": "linear",
+      "keys": [{ "frame": 1, "value": [0, 0, 0] }, { "frame": 96, "value": [0, 0, 360] }] }
+  ]
+}
