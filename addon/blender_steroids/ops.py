@@ -743,6 +743,10 @@ def _attach(o, spec, warnings):
         warnings.append('«%s»: no toca a «%s» desde %s en %s' % (o.name, tgt.name, side, at))
         return
     off = float(a.get('offset', 0.0))
+    if a.get('anchor') == 'base' and o.type == 'MESH' and o.data.vertices:
+        # la base de la pieza (su punto más bajo en Z local) queda sobre la superficie: garras, cuernos,
+        # botones y orejas sobresalen enteros sin calcular a mano la mitad de su largo
+        off -= min(v.co.z for v in o.data.vertices) * o.scale.z
     if a.get('align', True):
         o.rotation_mode = 'XYZ'
         q = n.to_track_quat('Z', 'Y')
@@ -1383,6 +1387,105 @@ def op_compose(args):
     return res
 
 
+def _mask_crop(mask, h):
+    """Silueta recortada a su caja y escalada (vecino más cercano) a la altura h."""
+    import numpy as np
+    b = _bbox(mask)
+    if not b:
+        return None
+    m = mask[b[1]:b[3] + 1, b[0]:b[2] + 1]
+    w = max(1, round(m.shape[1] * h / m.shape[0]))
+    ys = (np.arange(h) * m.shape[0] / h).astype(int)
+    xs = (np.arange(w) * m.shape[1] / w).astype(int)
+    return m[ys][:, xs]
+
+
+def _iou_aligned(a, b):
+    """IoU de dos siluetas ya escaladas a la misma altura, centradas en x."""
+    import numpy as np
+    W = max(a.shape[1], b.shape[1])
+    A = np.zeros((a.shape[0], W), bool)
+    B = np.zeros((b.shape[0], W), bool)
+    A[:, (W - a.shape[1]) // 2:(W - a.shape[1]) // 2 + a.shape[1]] = a
+    B[:, (W - b.shape[1]) // 2:(W - b.shape[1]) // 2 + b.shape[1]] = b
+    u = (A | B).sum()
+    return float((A & B).sum() / u) if u else 0.0
+
+
+def _fit_view(args, ref_mask):
+    """Prueba ángulos de cámara (azimut y elevación) con renders rápidos de silueta y devuelve la
+    dirección cuya silueta se parece más a la de la referencia."""
+    import tempfile
+    s = _scene()
+    guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
+                s.render.film_transparent, s.camera, s.render.filepath)
+    H = 160
+    ref_c = _mask_crop(ref_mask, H)
+    rw = s.render.resolution_x * 220 / s.render.resolution_y
+    s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = max(16, round(rw)), 220, 100
+    _set_engine(s, 'workbench')
+    s.render.film_transparent = True
+    s.render.image_settings.file_format = 'PNG'
+    cam = bpy.data.objects.new('bs_fit', bpy.data.cameras.new('bs_fit'))
+    s.collection.objects.link(cam)
+    s.camera = cam
+    tmp = os.path.join(tempfile.mkdtemp(prefix='bs-fit-'), 'v.png')
+    pruebas = []
+    try:
+        azs = args.get('fitAzimuths') or list(range(-75, 76, 15))
+        els = args.get('fitElevations') or [0.0, 15.0, 30.0]
+        for el in els:
+            for az in azs:
+                a, e = math.radians(az), math.radians(el)
+                d = [math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e)]
+                bpy.context.view_layer.update()
+                frame_camera(cam, args.get('objects'), d)
+                s.render.filepath = tmp
+                bpy.ops.render.render(write_still=True)
+                px = _load_pixels(tmp)
+                m = _mask_crop(px[..., 3] > 0.5, H)
+                iou = _iou_aligned(ref_c, m) if m is not None else 0.0
+                pruebas.append((iou, az, el, d))
+    finally:
+        bpy.data.objects.remove(cam, do_unlink=True)
+        (eng, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
+         s.render.film_transparent, s.camera, s.render.filepath) = guardado
+        s.render.engine = eng
+    pruebas.sort(key=lambda t: -t[0])
+    iou, az, el, d = pruebas[0]
+    return {'view': [round(x, 4) for x in d], 'azimuth': az, 'elevation': el, 'fitIoU': round(iou, 3),
+            'tried': len(pruebas), 'top3': [{'azimuth': t[1], 'elevation': t[2], 'iou': round(t[0], 3)}
+                                            for t in pruebas[:3]]}
+
+
+def _z_by_guide(render_path, objs_names):
+    """Altura del mundo (z) que cae en cada guía de la figura del render: 0 = base de la figura,
+    10 = su punto más alto. Traduce «la guía 7» a «z = 0.62 m» sin adivinar."""
+    from bpy_extras.object_utils import world_to_camera_view
+    s = _scene()
+    px = _load_pixels(render_path)
+    b = _bbox(px[..., 3] > 0.5)
+    cam = s.camera
+    if not b or cam is None:
+        return None
+    if objs_names:
+        objs = [_obj(n) for n in objs_names]
+    else:
+        objs = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
+    center, radius = _bounds(objs)
+    lo = min((o.matrix_world @ Vector(c)).z for o in objs for c in o.bound_box)
+    hi = max((o.matrix_world @ Vector(c)).z for o in objs for c in o.bound_box)
+    h = px.shape[0]
+    zs = [lo - 0.2 * (hi - lo) + (hi - lo) * 1.4 * i / 600 for i in range(601)]
+    vs = [world_to_camera_view(s, cam, Vector((center.x, center.y, z))).y for z in zs]
+    out = []
+    for k in range(11):
+        v = (b[1] + (b[3] - b[1]) * k / 10) / h
+        i = min(range(len(vs)), key=lambda j: abs(vs[j] - v))
+        out.append(round(zs[i], 3))
+    return out
+
+
 def op_compare(args):
     """Render con fondo transparente y el formato de la referencia, alineado a su figura."""
     ref = bpy.data.images.load(os.path.abspath(args['reference']), check_existing=False)
@@ -1396,11 +1499,20 @@ def op_compare(args):
     s.render.resolution_percentage = 100
     out = os.path.abspath(args['path'])
     tmp = os.path.splitext(out)[0] + '_render.png'
+    fit = None
+    if args.get('fitView'):
+        fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400)))
+        args = dict(args, view=fit['view'])
     # transparente: así la figura del render se separa del fondo sin adivinar
     r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
+    zg = _z_by_guide(tmp, args.get('objects'))
     c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
                     'height': int(args.get('height', 800)), 'guides': args.get('guides', True),
                     'align': args.get('align', True), 'overlay': args.get('overlay', True)})
+    if zg:
+        c['alignment']['zByGuide'] = zg
+    if fit:
+        c['fitView'] = fit
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
 
 
@@ -1416,11 +1528,27 @@ def _world_bvh(o, dg):
     bm.transform(o.matrix_world)
     e.to_mesh_clear()
     bmesh.ops.triangulate(bm, faces=bm.faces)
-    verts = [v.co.copy() for v in bm.verts]
-    step = max(1, len(verts) // 400)
     tree = BVHTree.FromBMesh(bm)
+    # puntos repartidos por ÁREA de la superficie, no por vértices: un cono tiene casi todos sus
+    # vértices en la base y contarlos daba por «enterrada» una garra que sale de la mano
+    import random
+    rnd = random.Random(0)
+    tris = [[v.co.copy() for v in f.verts] for f in bm.faces]
     bm.free()
-    return tree, verts[::step]
+    areas = [((b - a).cross(c - a)).length / 2 for a, b, c in tris]
+    total = sum(areas) or 1.0
+    samples = []
+    for (a, b, c), ar in zip(tris, areas):
+        n = ar / total * 500
+        k = int(n) + (1 if rnd.random() < n - int(n) else 0)
+        for _ in range(k):
+            u, v = rnd.random(), rnd.random()
+            if u + v > 1:
+                u, v = 1 - u, 1 - v
+            samples.append(a + (b - a) * u + (c - a) * v)
+    if not samples:
+        samples = [t[0] for t in tris[:50]]
+    return tree, samples
 
 
 def _inside_fraction(samples, tree):

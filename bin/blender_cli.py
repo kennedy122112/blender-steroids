@@ -20,7 +20,7 @@ Uso (toda salida es JSON por stdout):
          [--animation [--frames 1-120]] [--transparent]
   export --path modelo.glb|fbx|obj|stl|ply|usd [--objects a,b]
   compare --reference ref.png --path comparar.png [--view front|...] [--objects a,b] [--preview]
-          [--no-align] [--no-overlay] [--no-guides]
+          [--fit-view] [--no-align] [--no-overlay] [--no-guides]
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
@@ -442,6 +442,8 @@ def cmd_compare(a):
         args['align'] = False
     if a.no_overlay:
         args['overlay'] = False
+    if a.fit_view:
+        args['fitView'] = True
     return on_copy('compare', args, a)
 
 
@@ -645,6 +647,7 @@ def main(argv):
     sp.add_argument('--no-guides', '--noguides', dest='no_guides', action='store_true')
     sp.add_argument('--no-align', '--noalign', dest='no_align', action='store_true')
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
+    sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
     sp = p('check')
     sp.add_argument('--objects')
     sp.add_argument('--tolerance', type=float, default=0.004)
