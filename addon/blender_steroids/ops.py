@@ -244,10 +244,11 @@ def op_scene(args):
 GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 'subdivisions',
              'majorRadius', 'minorRadius', 'minorSegments', 'fill', 'vertices', 'edges', 'faces',
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
-             'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface')
+             'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
+             'fingers', 'scallop', 'bend', 'bones')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
-              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal'}
+              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane'}
 
 
 def _fit(bm, target):
@@ -432,6 +433,57 @@ def _blobby(o, name):
     return me
 
 
+def _membrane(bm, o):
+    """Membrana entre huesos (alas de murciélago o dragón, aletas, velas, abanicos): `root` (donde nace),
+    `tip` (punta del hueso principal), `fingers` (puntas de los dedos, en orden) y entre cada par de puntas
+    un festón que se mete hacia la raíz (`scallop`, 0 = borde recto). `bend` curva la membrana hacia
+    atrás (+Y) como una vela. `bones`: radio de los huesos (0 = sin huesos); van en la misma malla."""
+    root, tip = Vector(vec3(o['root'])), Vector(vec3(o['tip']))
+    fingers = [Vector(vec3(f)) for f in o.get('fingers', [])]
+    if not fingers:
+        raise ValueError('membrane necesita fingers: las puntas de los dedos del borde')
+    sc = float(o.get('scallop', 0.18))
+    bend = float(o.get('bend', 0.0))
+    span = max((f - root).length for f in [tip] + fingers) or 1.0
+
+    def doblar(p):
+        d = (p - root).length / span
+        return p + Vector((0, bend * d * d, 0))
+
+    borde, prev = [tip], tip
+    for f in fingers:
+        for t in (0.2, 0.4, 0.6, 0.8):
+            borde.append(prev.lerp(f, t).lerp(root, math.sin(math.pi * t) * sc))
+        borde.append(f)
+        prev = f
+    R = int(o.get('rings', 5))
+    centro = bm.verts.new(doblar(root))
+    anillos = [[bm.verts.new(doblar(root.lerp(e, k / R))) for e in borde] for k in range(1, R + 1)]
+    for i in range(len(borde) - 1):
+        bm.faces.new((centro, anillos[0][i], anillos[0][i + 1]))
+    for k in range(R - 1):
+        for i in range(len(borde) - 1):
+            bm.faces.new((anillos[k][i], anillos[k + 1][i], anillos[k + 1][i + 1], anillos[k][i + 1]))
+    # grosor: se extruye la membrana a lo largo de su normal (sin depender de un modificador)
+    th = float(o.get('thickness', 0.006))
+    if th > 0:
+        caras = list(bm.faces)
+        geo = bmesh.ops.extrude_face_region(bm, geom=caras)
+        nuevos = [g for g in geo['geom'] if isinstance(g, bmesh.types.BMVert)]
+        nrm = (tip - root).cross(fingers[len(fingers) // 2] - root).normalized()
+        bmesh.ops.translate(bm, vec=nrm * th, verts=nuevos)
+    rb = float(o.get('bones', 0.0))
+    if rb > 0:
+        # hueso principal raíz -> punta y un dedo desde el hueso hasta cada punta
+        huesos = [([doblar(root.lerp(tip, t / 8)) for t in range(9)], rb, rb * 0.55)]
+        n = len(fingers)
+        for i, f in enumerate(fingers):
+            desde = tip if i == 0 else root.lerp(tip, max(0.25, 1 - (i + 0.3) / (n + 0.3)))
+            huesos.append(([doblar(desde.lerp(f, t / 6)) for t in range(7)], rb * 0.6, rb * 0.25))
+        for pts, r0, r1 in huesos:
+            _tube(bm, {'points': [list(p) for p in pts], 'radii': [r0, r1], 'segments': 12})
+
+
 def build_mesh(o, name):
     t = o.get('type', 'cube').lower()
     bm = bmesh.new()
@@ -467,6 +519,8 @@ def build_mesh(o, name):
         _lathe(bm, o)
     elif t == 'superellipsoid':
         _superellipsoid(bm, o)
+    elif t == 'membrane':
+        _membrane(bm, o)
     elif t == 'blobby':
         bm.free()
         me = _blobby(o, name)
@@ -495,7 +549,7 @@ def build_mesh(o, name):
     if o.get('origin') == 'bottom' and bm.verts:
         zmin = min(v.co.z for v in bm.verts)
         bmesh.ops.translate(bm, vec=(0, 0, -zmin), verts=bm.verts)
-    if t in ('tube', 'lathe', 'superellipsoid'):
+    if t in ('tube', 'lathe', 'superellipsoid', 'membrane'):
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.normal_update()
@@ -1265,7 +1319,43 @@ def _subject_mask(px):
     # fuera las líneas sueltas (cuadrícula, gizmos): solo filas y columnas con bastante figura
     filas = m.sum(axis=1) > 0.06 * w
     cols = m.sum(axis=0) > 0.06 * h
-    return _fill_rows(m & filas[:, None] & cols[None, :])
+    m = m & filas[:, None] & cols[None, :]
+    # y fuera lo que no está unido a la figura (iconos y botones de un visor que quedaron en el recorte)
+    return _fill_rows(_largest_component(m))
+
+
+def _largest_component(m):
+    """Se queda con la región conectada más grande (en una versión reducida, para ir rápido)."""
+    import numpy as np
+    from collections import deque
+    h, w = m.shape
+    k = max(1, int(math.ceil(max(h, w) / 240)))
+    hh, ww = int(math.ceil(h / k)), int(math.ceil(w / k))
+    pad = np.zeros((hh * k, ww * k), bool)
+    pad[:h, :w] = m
+    small = pad.reshape(hh, k, ww, k).any(axis=(1, 3))
+    lab = np.zeros(small.shape, np.int32)
+    tam, n = {}, 0
+    for y0, x0 in zip(*np.nonzero(small)):
+        if lab[y0, x0]:
+            continue
+        n += 1
+        lab[y0, x0] = n
+        q, c = deque([(y0, x0)]), 0
+        while q:
+            y, x = q.popleft()
+            c += 1
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < hh and 0 <= xx < ww and small[yy, xx] and not lab[yy, xx]:
+                    lab[yy, xx] = n
+                    q.append((yy, xx))
+        tam[n] = c
+    if not tam:
+        return m
+    mayor = max(tam, key=tam.get)
+    keep = np.repeat(np.repeat(lab == mayor, k, axis=0), k, axis=1)[:h, :w]
+    return m & keep
 
 
 def _fill_rows(m):
@@ -1459,31 +1549,50 @@ def _fit_view(args, ref_mask):
 
 
 def _z_by_guide(render_path, objs_names):
-    """Altura del mundo (z) que cae en cada guía de la figura del render: 0 = base de la figura,
-    10 = su punto más alto. Traduce «la guía 7» a «z = 0.62 m» sin adivinar."""
+    """Para cada décimo del alto de la figura en el render (de abajo arriba): la altura media del mundo (z)
+    de lo que se ve ahí, y qué piezas forman su borde izquierdo y derecho. Usa los vértices reales
+    proyectados por la cámara, así que vale también en perspectiva."""
     from bpy_extras.object_utils import world_to_camera_view
     s = _scene()
     px = _load_pixels(render_path)
     b = _bbox(px[..., 3] > 0.5)
     cam = s.camera
     if not b or cam is None:
-        return None
-    if objs_names:
-        objs = [_obj(n) for n in objs_names]
-    else:
-        objs = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
-    center, radius = _bounds(objs)
-    lo = min((o.matrix_world @ Vector(c)).z for o in objs for c in o.bound_box)
-    hi = max((o.matrix_world @ Vector(c)).z for o in objs for c in o.bound_box)
+        return None, None
     h = px.shape[0]
-    zs = [lo - 0.2 * (hi - lo) + (hi - lo) * 1.4 * i / 600 for i in range(601)]
-    vs = [world_to_camera_view(s, cam, Vector((center.x, center.y, z))).y for z in zs]
-    out = []
-    for k in range(11):
-        v = (b[1] + (b[3] - b[1]) * k / 10) / h
-        i = min(range(len(vs)), key=lambda j: abs(vs[j] - v))
-        out.append(round(zs[i], 3))
-    return out
+    v0, v1 = b[1] / h, b[3] / h
+    dg = bpy.context.evaluated_depsgraph_get()
+    objs = [_obj(n) for n in objs_names] if objs_names else \
+        [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render
+         and o.display_type not in ('WIRE', 'BOUNDS')]
+    bandas = [[] for _ in range(10)]
+    for o in objs:
+        e = o.evaluated_get(dg)
+        try:
+            me = e.to_mesh()
+        except RuntimeError:
+            continue
+        mw = o.matrix_world
+        vs = me.vertices
+        step = max(1, len(vs) // 1500)
+        for i in range(0, len(vs), step):
+            w = mw @ vs[i].co
+            c = world_to_camera_view(s, cam, w)
+            if c.z <= 0 or not (v0 <= c.y <= v1):
+                continue
+            k = min(9, int((c.y - v0) / max(1e-9, v1 - v0) * 10))
+            bandas[k].append((c.x, w.z, o.name))
+        e.to_mesh_clear()
+    zs, bordes = [], []
+    for bd in bandas:
+        if not bd:
+            zs.append(None)
+            bordes.append(None)
+            continue
+        zz = sorted(t[1] for t in bd)
+        zs.append(round(zz[len(zz) // 2], 3))
+        bordes.append({'left': min(bd)[2], 'right': max(bd)[2]})
+    return zs, bordes
 
 
 def op_compare(args):
@@ -1505,12 +1614,13 @@ def op_compare(args):
         args = dict(args, view=fit['view'])
     # transparente: así la figura del render se separa del fondo sin adivinar
     r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
-    zg = _z_by_guide(tmp, args.get('objects'))
+    zg, bordes = _z_by_guide(tmp, args.get('objects'))
     c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
                     'height': int(args.get('height', 800)), 'guides': args.get('guides', True),
                     'align': args.get('align', True), 'overlay': args.get('overlay', True)})
     if zg:
         c['alignment']['zByGuide'] = zg
+        c['alignment']['edgesByGuide'] = bordes
     if fit:
         c['fitView'] = fit
     return dict(c, render=tmp, camera=r.get('camera'), engine=r.get('engine'))
