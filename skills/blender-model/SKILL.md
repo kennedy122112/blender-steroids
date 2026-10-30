@@ -216,6 +216,20 @@ Principled BSDF: `color`, `metallic`, `roughness`, `ior`, `alpha`, `transmission
 absoluta o relativa al spec). Colores en hex como en cualquier selector (`#rrggbb`); blender-cli los
 convierte al espacio lineal de Blender.
 
+### Estilo retro de 32 bits (low-poly y pixel art)
+Para el look de los juegos 3D de consolas de 32 bits:
+- **Geometría**: pocas caras y sombreado plano: `"smooth": false`, `segments` 4-8 en cilindros y tubos,
+  `ico_sphere` con `subdivisions: 1`, sin `subsurf` ni biseles redondeados.
+- **Texturas pixeladas en el spec**: un material con `pixels` dibuja la imagen carácter a carácter y la
+  muestra sin suavizar:
+  `{"name": "Cara", "emissionStrength": 1.5, "pixels": {"rows": ["........", ".GG..GG.", "..GGGG.."],
+  "palette": {".": "#08110b", "G": "#5dff7a"}, "plane": [0.3, 0.19], "axes": "XZ"}}`.
+  `plane` es el tamaño (m) del área que cubre la imagen sobre la pieza (centrada en su origen), `axes`
+  "XZ" para un frente y "XY" para un piso; `"repeat": true` repite (baldosas). Imágenes chicas (8-32
+  píxeles de lado) y paletas cortas. Pon la textura en una pieza fina pegada a la cara (pantalla, panel).
+- **Render**: `blender-cli render -Path x.png -Retro` (ver `blender-render`) y `viewTransform: "Standard"`
+  para que los colores de la paleta salgan tal cual.
+
 ### Animación
 `animation: [{ object, property, keys: [{frame, value}], interpolation }]`. `property`: `location`,
 `rotation` (grados), `scale`, o un dato del objeto con `data.` (`data.energy` de una luz, `data.lens` de
@@ -261,6 +275,27 @@ es esculpida, parte de un modelo y vístelo, ilumínalo y renderízalo con blend
   "normal": "ladrillo_nor.jpg", "roughness": "ladrillo_rough.jpg"}, "textureScale": 2}`. Se proyectan en
   caja desde el objeto: no hace falta desplegar UV en las piezas de `build`. `textureScale` más alto
   repite más la textura (piezas más grandes).
+
+## Caminar (personajes de piezas, sin huesos)
+`blender-cli walk -Spec caminata.json [-Save x.blend]` arma un ciclo de caminata para un personaje hecho
+de piezas: pivotes en las caderas que balancean cada pierna, el pie que avanza se levanta, el cuerpo
+sube, baja y se mece, la cabeza asiente y, si se piden, los brazos se balancean al revés que las piernas.
+```json
+{ "cycle": 24, "cycles": 2, "angle": 22, "lift": 0.035, "follow": "Camara",
+  "legs": [ { "pivot": [-0.1, 0, 0.31], "parts": ["PieI", "PiernaI"], "foot": "PieI" },
+            { "pivot": [ 0.1, 0, 0.31], "parts": ["PieD", "PiernaD"], "foot": "PieD" } ],
+  "body": { "pivot": [0, 0, 0.33], "parts": ["Torso", "BrazoI", "BrazoD"] },
+  "head": { "pivot": [0, 0, 0.79], "parts": ["Cabeza", "Cara"] },
+  "arms": [ { "pivot": [-0.25, 0, 0.68], "parts": ["BrazoI"] } ] }
+```
+- El personaje debe mirar a **-Y** en reposo; `direction` [x, y] cambia hacia dónde camina.
+- `pivot` de cada pierna = la cadera (donde gira); `foot` = la pieza que apoya: se mantiene plana.
+- El rebote del cuerpo se **mide** en cada fotograma para que el pie de apoyo toque el piso: la
+  respuesta trae `footMinZ`, que debe ser 0. Si el personaje sostiene algo con las manos, no pongas
+  `arms`: los brazos van en `body`.
+- `follow` hace que la cámara lo acompañe (el piso se desliza debajo): pon un piso con textura para que
+  se note el avance. El ciclo se repite sin cortes; para un video, `render -Animation` (con `-Retro` si
+  es estilo 32 bits) y une los fotogramas con ffmpeg.
 
 ## Lo que `build` no cubre
 Para edición de malla avanzada, nodos de geometría, partículas, rigs, físicas o cualquier otra cosa

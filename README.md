@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.9.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.10.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,6 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
+- 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
 - 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave.
@@ -196,6 +197,8 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
 | `compare -Reference ref.png -Path c.png [-FitView]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
+| `walk -Spec caminata.json` | Ciclo de caminata sin huesos: pies planos y rebote medido en cada fotograma |
+| `render -Path x.png -Retro` | Look de consola de 32 bits: baja resolución, 15 bits con tramado, píxeles duros |
 | `import -Path m.glb [-Height 0.85]` | Trae un modelo como base: agrupado, escalado y apoyado en el suelo |
 | `asset search\|get -Type hdri\|texture\|model` | Busca y descarga recursos libres de Poly Haven; `-Apply` los usa en la escena |
 | `fit -Reference ref.png [-Reference perfil.png] -Parts partes.json -View fit -View right` | Ajusta escala y posición de las piezas hasta que la silueta coincida con una o varias vistas de referencia |

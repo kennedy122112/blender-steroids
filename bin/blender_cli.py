@@ -24,6 +24,8 @@ Uso (toda salida es JSON por stdout):
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
+  walk --spec caminata.json [--save x.blend] ciclo de caminata sin huesos (pies planos, rebote medido)
+  render ... --retro [--retro-width 320] [--retro-scale 4]   look de consola de 32 bits
   import --path modelo.glb|fbx|obj|stl|ply|usd [--name n] [--height 0.5] [--location x,y,z] [--save x.blend]
                                             trae un modelo como base: agrupado, escalado y apoyado en el suelo
   asset search --type hdri|texture|model [--query madera] [--limit 10]
@@ -284,7 +286,7 @@ def run(cmd, args, a, live_only=False):
     if resp is None:
         not_connected()
     resp['mode'] = 'live'
-    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec', 'fit', 'import'):
+    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec', 'fit', 'import', 'walk'):
         sv = live('save', {'path': a.save})
         resp['saved'] = sv.get('saved') if sv and sv.get('ok') else sv
     return resp
@@ -437,6 +439,8 @@ def cmd_render(a):
             'animation': a.animation}
     if a.view and ',' in a.view:   # dirección propia: "0.9,-0.6,0.2"
         args['view'] = [float(x) for x in a.view.strip('[]').split(',')]
+    if a.retro:
+        args['retro'] = {'width': a.retrowidth, 'scale': a.retroscale, 'bits': 5, 'dither': True}
     if a.resolution:
         args['resolution'] = [int(x) for x in re.split('[x,]', a.resolution)]
     if a.frames:
@@ -641,6 +645,17 @@ def cmd_asset(a):
     return out
 
 
+def cmd_walk(a):
+    try:
+        with open(a.spec, encoding='utf-8-sig') as f:
+            spec = json.load(f)
+    except FileNotFoundError:
+        fail('No existe el spec %s' % os.path.abspath(a.spec))
+    except ValueError as e:
+        fail('El spec %s no es JSON válido: %s' % (a.spec, e))
+    return run('walk', spec, a)
+
+
 def cmd_check(a):
     args = {'tolerance': a.tolerance}
     if a.objects:
@@ -814,6 +829,9 @@ def main(argv):
     sp.add_argument('--path', required=True)
     sp = p('render')
     sp.add_argument('--path', required=True)
+    sp.add_argument('--retro', action='store_true')
+    sp.add_argument('--retrowidth', '--retro-width', dest='retrowidth', type=int, default=320)
+    sp.add_argument('--retroscale', '--retro-scale', dest='retroscale', type=int, default=4)
     sp.add_argument('--preview', action='store_true')
     sp.add_argument('--view')
     sp.add_argument('--engine')
@@ -871,6 +889,9 @@ def main(argv):
     sp.add_argument('--colors', action='store_true')
     sp.add_argument('--colorweight', '--color-weight', dest='colorweight', type=float, default=0.3)
     sp.add_argument('--save')
+    sp = p('walk')
+    sp.add_argument('--spec', required=True)
+    sp.add_argument('--save')
     sp = p('check')
     sp.add_argument('--objects')
     sp.add_argument('--tolerance', type=float, default=0.004)
@@ -911,6 +932,8 @@ def main(argv):
         res = cmd_fit(a)
     elif a.cmd == 'import':
         res = cmd_import(a)
+    elif a.cmd == 'walk':
+        res = cmd_walk(a)
     elif a.cmd == 'asset':
         res = cmd_asset(a)
     else:

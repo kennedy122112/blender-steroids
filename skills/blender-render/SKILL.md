@@ -23,6 +23,11 @@ en segundo plano: **el Blender del usuario no se congela** y su archivo no cambi
 | `-Resolution 1920x1080`, `-Percentage 50` | Tamaño de la imagen |
 | `-Camera nombre`, `-Frame N`, `-Transparent` | Otra cámara, otro fotograma, fondo transparente (PNG) |
 
+**Look retro de 32 bits**: `-Retro [-RetroWidth 320] [-RetroScale 4]` renderiza chico (320 de ancho,
+con el formato de la escena), pasa el color a 15 bits (5 por canal) con tramado ordenado y amplía x4
+con píxeles duros. Vale también con `-Animation` (procesa cada fotograma). Combínalo con texturas
+`pixels` y sombreado plano (ver `blender-model`).
+
 Sin cámara en la escena, se crea una temporal en vista `iso`. Siempre **lee la imagen** antes de
 enseñarla: si algo se ve mal, corrígelo con `blender-model` y vuelve a renderizar.
 Avisa el tiempo antes de un render largo (Cycles a 1080p con 256 muestras puede tardar minutos).

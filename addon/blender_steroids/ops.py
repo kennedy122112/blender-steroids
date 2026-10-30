@@ -617,6 +617,59 @@ def _texture_maps(m, p, maps, base_dir, scale):
     coord.location, mapping.location = (x0 - 500, y), (x0 - 300, y)
 
 
+def _pixel_texture(m, p, nombre, px_spec, emision):
+    """Pixel art dibujado en el spec: `rows` (cadenas de arriba abajo, un carácter por píxel) y `palette`
+    ({carácter: "#rrggbb"}). Se filtra sin suavizar (Closest) y se proyecta plano sobre la pieza con sus
+    coordenadas locales: `plane` [ancho, alto] del área que cubre la imagen (en metros), `axes` "XZ" (frente)
+    o "XY" (arriba), `repeat` para baldosas. Estilo consola de 32 bits, carteles, caras de pantalla."""
+    import numpy as np
+    filas, paleta = px_spec['rows'], px_spec['palette']
+    h, w = len(filas), max(len(f) for f in filas)
+    arr = np.zeros((h, w, 4), np.float32)
+    for y, fila in enumerate(filas):
+        for x, ch in enumerate(fila.ljust(w, fila[-1] if fila else ' ')):
+            c = paleta.get(ch)
+            if c is None:
+                raise ValueError('pixels: el carácter %r no está en palette' % ch)
+            hx = c.lstrip('#')
+            arr[h - 1 - y, x] = [int(hx[i:i + 2], 16) / 255 for i in (0, 2, 4)] + [1.0]
+    img = bpy.data.images.get('px_' + nombre) or bpy.data.images.new('px_' + nombre, w, h, alpha=True)
+    if tuple(img.size) != (w, h):
+        img.scale(w, h)
+    img.pixels.foreach_set(arr.ravel())
+    img.pack()
+    nt = m.node_tree
+    for n in [n for n in nt.nodes if n.label.startswith('bs_px')]:
+        nt.nodes.remove(n)
+    coord = nt.nodes.new('ShaderNodeTexCoord')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    comb = nt.nodes.new('ShaderNodeCombineXYZ')
+    coord.label, sep.label, comb.label = 'bs_px_coord', 'bs_px_sep', 'bs_px_comb'
+    nt.links.new(coord.outputs['Object'], sep.inputs['Vector'])
+    ejes = px_spec.get('axes', 'XZ').upper()
+    ancho, alto = (px_spec.get('plane') or [1.0, 1.0])[:2]
+    repetir = bool(px_spec.get('repeat'))
+    for eje, tam, entrada in ((ejes[0], ancho, 'X'), (ejes[1], alto, 'Y')):
+        mul = nt.nodes.new('ShaderNodeMath')
+        mul.label = 'bs_px_' + entrada
+        mul.operation = 'MULTIPLY_ADD'
+        mul.inputs[1].default_value = 1.0 / float(tam)
+        mul.inputs[2].default_value = 0.0 if repetir else 0.5
+        nt.links.new(sep.outputs[eje], mul.inputs[0])
+        nt.links.new(mul.outputs['Value'], comb.inputs[entrada])
+    tex = nt.nodes.new('ShaderNodeTexImage')
+    tex.label = 'bs_px_tex'
+    tex.image, tex.interpolation = img, 'Closest'
+    tex.extension = 'REPEAT' if repetir else 'EXTEND'
+    nt.links.new(comb.outputs['Vector'], tex.inputs['Vector'])
+    nt.links.new(tex.outputs['Color'], p.inputs['Base Color'])
+    if emision > 0:
+        nt.links.new(tex.outputs['Color'], p.inputs['Emission Color'])
+        p.inputs['Emission Strength'].default_value = emision
+    for i, n in enumerate((coord, sep, comb, tex)):
+        n.location = (p.location.x - 900 + 220 * i, p.location.y + 300)
+
+
 def build_material(spec, base_dir):
     m = bpy.data.materials.get(spec['name'])
     created = m is None
@@ -664,6 +717,8 @@ def build_material(spec, base_dir):
                     pass
     if spec.get('maps'):
         _texture_maps(m, p, spec['maps'], base_dir, float(spec.get('textureScale', 1.0)))
+    if spec.get('pixels'):
+        _pixel_texture(m, p, spec['name'], spec['pixels'], float(spec.get('emissionStrength', 0.0)))
     if spec.get('texture'):
         path = _path(spec['texture'], base_dir)
         tex =next((n for n in nt.nodes if n.type == 'TEX_IMAGE' and n.label == 'bs_texture'), None)
@@ -1273,6 +1328,33 @@ def op_exec(args):
 # ----------------------------------------------------------------------------------- render, export
 # Se ejecutan en una copia sin interfaz (headless.py): no congelan el Blender del usuario.
 
+def _retro_file(path, out_path, bits=5, scale=4, dither=True):
+    """Look de consola de 32 bits: color de `bits` por canal (5 = 15 bits) con tramado ordenado 4x4 y
+    ampliación x`scale` con píxeles duros (vecino más cercano)."""
+    import numpy as np
+    im = bpy.data.images.load(path, check_existing=False)
+    w, h = im.size
+    px = np.empty(w * h * 4, np.float32)
+    im.pixels.foreach_get(px)
+    bpy.data.images.remove(im)
+    px = px.reshape(h, w, 4)
+    niveles = float(2 ** int(bits) - 1)
+    um = 0.0
+    if dither:
+        bayer = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], np.float32) / 16 - 0.5
+        um = np.tile(bayer, (h // 4 + 1, w // 4 + 1))[:h, :w, None] * 0.9
+    px[..., :3] = np.clip(np.floor(px[..., :3] * niveles + 0.5 + um) / niveles, 0, 1)
+    px[..., 3] = 1
+    k = max(1, int(scale))
+    g = px.repeat(k, axis=0).repeat(k, axis=1)
+    out = bpy.data.images.new('bs_retro', w * k, h * k, alpha=False)
+    out.pixels.foreach_set(g.ravel())
+    out.filepath_raw = out_path
+    out.file_format = 'PNG'
+    out.save()
+    bpy.data.images.remove(out)
+
+
 def op_render(args):
     s = _scene()
     path = os.path.abspath(args['path'])
@@ -1306,7 +1388,14 @@ def op_render(args):
         s.camera = cam
     if args.get('frame') is not None:
         s.frame_set(int(args['frame']))
-    s.render.image_settings.file_format = 'JPEG' if path.lower().endswith(('.jpg', '.jpeg')) else 'PNG'
+    retro = args.get('retro')
+    if retro:
+        # se renderiza chico (p. ej. 320 de ancho) y después se amplía con píxeles duros
+        rw = int(retro.get('width', 320))
+        ar = s.render.resolution_y / s.render.resolution_x
+        s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = rw, max(16, round(rw * ar)), 100
+        s.render.filter_size = 0.5      # bordes más duros, como el hardware de la época
+    s.render.image_settings.file_format = 'JPEG' if path.lower().endswith(('.jpg', '.jpeg')) and not retro else 'PNG'
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     if args.get('animation'):
         if args.get('frames'):
@@ -1314,10 +1403,20 @@ def op_render(args):
         base, _ = os.path.splitext(path)
         s.render.filepath = base + '_####'
         bpy.ops.render.render(animation=True)
+        if retro:
+            for f in range(s.frame_start, s.frame_end + 1):
+                fp = base + '_%04d.png' % f
+                if os.path.exists(fp):
+                    _retro_file(fp, fp, retro.get('bits', 5), retro.get('scale', 4), retro.get('dither', True))
         return {'frames': [s.frame_start, s.frame_end], 'pattern': base + '_####.png', 'engine': s.render.engine,
-                'camera': s.camera.name}
+                'camera': s.camera.name, 'retro': bool(retro)}
     s.render.filepath = path
     bpy.ops.render.render(write_still=True)
+    if retro:
+        _retro_file(path, path, retro.get('bits', 5), retro.get('scale', 4), retro.get('dither', True))
+        k = int(retro.get('scale', 4))
+        return {'image': path, 'engine': s.render.engine, 'camera': s.camera.name, 'retro': True,
+                'size': [s.render.resolution_x * k, s.render.resolution_y * k]}
     pct = s.render.resolution_percentage / 100
     return {'image': path, 'engine': s.render.engine, 'camera': s.camera.name,
             'size': [int(s.render.resolution_x * pct), int(s.render.resolution_y * pct)]}
@@ -2160,6 +2259,130 @@ def op_import(args):
             'dimensions': r3(d), 'scale': round(k, 4), 'collection': coll.name}
 
 
+def op_walk(args):
+    """Ciclo de caminata sin huesos para personajes hechos de piezas.
+
+    args: legs [{pivot [x,y,z] (cadera), parts [...], foot (pieza que apoya)}] (2 o más, alternan),
+    body {pivot, parts} (sube, baja y se mece), head {pivot, parts} (asiente), arms [{pivot, parts}]
+    (balanceo opuesto a la pierna del mismo lado; omítelos si sostiene algo), follow (cámara que lo
+    sigue), cycle (fotogramas por ciclo, 24), cycles (2), angle (apertura en grados, 22), lift (cuánto sube
+    el pie en el aire, m), sway (°), nod (°), armAngle (°), direction ([x,y] hacia dónde camina; el
+    personaje debe mirar a -Y en su pose de reposo). Pies planos y rebote medido en cada fotograma: el
+    pie de apoyo toca el piso, nunca lo atraviesa."""
+    s = _scene()
+    C = int(args.get('cycle', 24))
+    N = int(args.get('cycles', 2))
+    A = math.radians(float(args.get('angle', 22)))
+    ALZA = float(args.get('lift', 0.035))
+    s.frame_start, s.frame_end = 1, C * N
+
+    def vacio(nombre, loc, padre=None):
+        o = bpy.data.objects.get(nombre) or bpy.data.objects.new(nombre, None)
+        if o.name not in s.collection.objects:
+            s.collection.objects.link(o)
+        o.empty_display_type, o.empty_display_size = 'PLAIN_AXES', 0.1
+        o.animation_data_clear()
+        o.parent = None
+        o.location, o.rotation_euler = vec3(loc), (0, 0, 0)
+        bpy.context.view_layer.update()
+        if padre:
+            colgar(o, padre)
+        return o
+
+    def colgar(o, padre):
+        bpy.context.view_layer.update()
+        mw = o.matrix_world.copy()
+        o.parent = padre
+        o.matrix_parent_inverse = padre.matrix_world.inverted()
+        o.matrix_world = mw
+
+    def clave(o, prop, valor, f):
+        setattr(o, prop, valor)
+        o.keyframe_insert(data_path=prop, frame=f)
+
+    raiz = vacio('bs_walk_raiz', (0, 0, 0))
+    rebote = vacio('bs_walk_rebote', (0, 0, 0), raiz)
+    piernas = []
+    for i, lg in enumerate(args['legs']):
+        cad = vacio('bs_walk_pierna%d' % i, lg['pivot'], rebote)
+        for n in lg['parts']:
+            colgar(_obj(n), cad)
+        pie = _obj(lg.get('foot') or lg['parts'][0])
+        pie.animation_data_clear()
+        piernas.append((cad, pie, Vector(vec3(lg['pivot'])), 1 if i % 2 == 0 else -1))
+    cuerpo = cabeza = None
+    if args.get('body'):
+        cuerpo = vacio('bs_walk_cuerpo', args['body']['pivot'], rebote)
+        for n in args['body']['parts']:
+            colgar(_obj(n), cuerpo)
+    if args.get('head'):
+        cabeza = vacio('bs_walk_cabeza', args['head']['pivot'], cuerpo or rebote)
+        for n in args['head']['parts']:
+            colgar(_obj(n), cabeza)
+    brazos = []
+    for i, ar in enumerate(args.get('arms', [])):
+        b = vacio('bs_walk_brazo%d' % i, ar['pivot'], cuerpo or rebote)
+        for n in ar['parts']:
+            colgar(_obj(n), b)
+        lado = -1 if vec3(ar['pivot'])[0] < 0 else 1
+        brazos.append((b, lado))
+    if args.get('follow'):
+        colgar(_obj(args['follow']), raiz)
+
+    # largo de pierna medido: de la cadera a la suela del pie
+    bpy.context.view_layer.update()
+    L = max(0.01, sum(cad.matrix_world.translation.z - min((pie.matrix_world @ v.co).z for v in pie.data.vertices)
+                      for cad, pie, _, _ in piernas) / len(piernas))
+    PASO = 2 * L * math.sin(A)
+    d = args.get('direction', [0, -1])
+    raiz.rotation_euler = (0, 0, math.atan2(d[0], -d[1]))
+    avance = Vector((d[0], d[1], 0)).normalized()
+
+    for f in range(1, C * N + 1):
+        fase = 2 * math.pi * (f - 1) / C
+        for cad, pie, piv, sg in piernas:
+            th = A * math.sin(fase) * sg
+            clave(cad, 'rotation_euler', (-th, 0, 0), f)          # +X lleva la pierna hacia atrás (+Y)
+            clave(pie, 'rotation_euler', (th, 0, 0), f)           # el pie queda plano
+            alza = ALZA * max(0.0, math.cos(fase) * sg) ** 2      # sube el que va hacia adelante
+            clave(cad, 'location', (piv.x, piv.y, piv.z + alza), f)
+        if cuerpo:
+            clave(cuerpo, 'rotation_euler', (math.radians(2), math.radians(float(args.get('sway', 3))) *
+                                            math.sin(fase), 0), f)
+        if cabeza:
+            nod = math.radians(float(args.get('nod', 2)))
+            clave(cabeza, 'rotation_euler', (nod * math.sin(2 * fase), 0, nod * math.sin(fase)), f)
+        for b, lado in brazos:
+            clave(b, 'rotation_euler', (math.radians(float(args.get('armAngle', 18))) * math.sin(fase) * lado, 0, 0), f)
+        clave(raiz, 'location', tuple(avance * (2 * PASO * (f - 1) / C)), f)
+
+    # rebote medido: en cada fotograma el pie más bajo toca el piso (z = 0)
+    pies = [pie for _, pie, _, _ in piernas]
+    minimos = []
+    for f in range(1, C * N + 1):
+        rebote.location = (0, 0, 0)
+        s.frame_set(f)
+        rebote.location = (0, 0, 0)
+        bpy.context.view_layer.update()
+        mn = min((p.matrix_world @ v.co).z for p in pies for v in p.data.vertices)
+        clave(rebote, 'location', (0, 0, -mn), f)
+    for f in range(1, C * N + 1, max(1, C // 8)):
+        s.frame_set(f)
+        minimos.append(round(min((p.matrix_world @ v.co).z for p in pies for v in p.data.vertices), 4))
+
+    from bpy_extras.anim_utils import action_get_channelbag_for_slot
+    for o in [raiz, rebote, cuerpo, cabeza] + [x[0] for x in piernas] + pies + [b for b, _ in brazos]:
+        if o is None or not (o.animation_data and o.animation_data.action):
+            continue
+        for fc in action_get_channelbag_for_slot(o.animation_data.action, o.animation_data.action_slot).fcurves:
+            for k in fc.keyframe_points:
+                k.interpolation = 'LINEAR'
+    s.frame_set(1)
+    return {'frames': [1, C * N], 'legLength': round(L, 3), 'stride': round(PASO, 3),
+            'distance': round(2 * PASO * N, 3), 'footMinZ': min(minimos), 'note':
+            'footMinZ debe ser 0 (el pie de apoyo toca el piso). El ciclo se repite sin cortes.'}
+
+
 def op_export(args):
     path = os.path.abspath(args['path'])
     ext = os.path.splitext(path)[1].lower()
@@ -2207,6 +2430,7 @@ OPS = {
     'check': op_check,
     'fit': op_fit,
     'import': op_import,
+    'walk': op_walk,
 }
 
 
