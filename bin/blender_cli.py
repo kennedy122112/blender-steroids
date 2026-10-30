@@ -24,6 +24,11 @@ Uso (toda salida es JSON por stdout):
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
+  import --path modelo.glb|fbx|obj|stl|ply|usd [--name n] [--height 0.5] [--location x,y,z] [--save x.blend]
+                                            trae un modelo como base: agrupado, escalado y apoyado en el suelo
+  asset search --type hdri|texture|model [--query madera] [--limit 10]
+  asset get --id nombre --type hdri|texture|model [--res 1k|2k|4k] [--apply] [--material nombre]
+                                            recursos libres (CC0) de Poly Haven; --apply los usa en la escena
   fit --reference ref.png [--reference perfil.png ...] --parts partes.json
       [--view right ... | --fit-view] [--budget 400] [--colors [--color-weight 0.3]] [--save x.blend]
                                             (cada --view va con su --reference, en orden; las que falten
@@ -248,11 +253,11 @@ def headless(cmd, args=None, file=None, save=None, timeout=None):
     if not exe:
         fail('No encuentro Blender en esta PC. Instálalo desde blender.org (o define BLENDER_STEROIDS_BLENDER).')
     new = bool(file) and not os.path.exists(file)
-    if new and cmd not in ('build', 'exec'):
+    if new and cmd not in ('build', 'exec', 'import'):
         fail('No existe el archivo %s' % os.path.abspath(file))
     tmp = tempfile.mkdtemp(prefix='bs-')
     req_p, out_p = os.path.join(tmp, 'pedido.json'), os.path.join(tmp, 'respuesta.json')
-    if new and not save and cmd in ('build', 'exec'):
+    if new and not save and cmd in ('build', 'exec', 'import'):
         save = file
     req = {'cmd': cmd, 'args': args or {}, 'new': new or not file, 'save': save}
     with open(req_p, 'w', encoding='utf-8') as f:
@@ -279,7 +284,7 @@ def run(cmd, args, a, live_only=False):
     if resp is None:
         not_connected()
     resp['mode'] = 'live'
-    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec', 'fit'):
+    if resp.get('ok') and getattr(a, 'save', None) and cmd in ('build', 'exec', 'fit', 'import'):
         sv = live('save', {'path': a.save})
         resp['saved'] = sv.get('saved') if sv and sv.get('ok') else sv
     return resp
@@ -508,6 +513,134 @@ def cmd_fit(a):
     return run('fit', args, a)
 
 
+def cmd_import(a):
+    args = {'path': os.path.abspath(a.path)}
+    if not os.path.exists(args['path']):
+        fail('No existe el modelo %s' % args['path'])
+    if a.name:
+        args['name'] = a.name
+    if a.collection:
+        args['collection'] = a.collection
+    if a.height:
+        args['height'] = a.height
+    if a.location:
+        args['location'] = [float(x) for x in a.location.strip('[]').split(',')]
+    if a.rotation:
+        args['rotation'] = [float(x) for x in a.rotation.strip('[]').split(',')]
+    return run('import', args, a)
+
+
+# ------------------------------------------------------------------------- Poly Haven
+
+PH_API = 'https://api.polyhaven.com'
+PH_TIPOS = {'hdri': 'hdris', 'texture': 'textures', 'model': 'models'}
+
+
+def _cache_dir():
+    base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~/.cache')
+    d = os.path.join(base, 'blender-steroids', 'polyhaven')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _http_json(url):
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': 'blender-steroids/%s' % VERSION})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode('utf-8'))
+    except OSError as e:
+        fail('No se pudo consultar Poly Haven (%s): %s' % (url, e),
+             hint='Revisa la conexión a internet o si el agente corre en un sandbox sin red.')
+
+
+def _descargar(url, destino):
+    import urllib.request
+    if os.path.exists(destino) and os.path.getsize(destino) > 0:
+        return destino   # ya estaba en la caché
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    req = urllib.request.Request(url, headers={'User-Agent': 'blender-steroids/%s' % VERSION})
+    tmp = destino + '.part'
+    with urllib.request.urlopen(req, timeout=300) as r, open(tmp, 'wb') as f:
+        shutil.copyfileobj(r, f)
+    os.replace(tmp, destino)
+    return destino
+
+
+def _elegir(variantes, res, formatos):
+    """De {res: {formato: {url,...}}} elige la resolución pedida (o la más cercana menor) y el formato."""
+    orden = ['1k', '2k', '4k', '8k', '16k']
+    pedidas = [res] + [r for r in reversed(orden[:orden.index(res)])] + orden[orden.index(res) + 1:]
+    for r in pedidas:
+        if r in variantes:
+            for f in formatos:
+                if f in variantes[r]:
+                    return r, variantes[r][f]
+    return None, None
+
+
+def cmd_asset(a):
+    tipo = PH_TIPOS.get(a.type)
+    if not tipo:
+        fail('Tipo no válido: %s (hdri, texture o model)' % a.type)
+    if a.action == 'search':
+        datos = _http_json('%s/assets?t=%s' % (PH_API, tipo))
+        q = (a.query or '').lower().split()
+        res = []
+        for aid, info in datos.items():
+            texto = ' '.join([aid, info.get('name', '')] + info.get('categories', []) + info.get('tags', [])).lower()
+            if all(w in texto for w in q):
+                res.append({'id': aid, 'name': info.get('name'), 'categories': info.get('categories', [])[:5],
+                            'tags': info.get('tags', [])[:6], 'downloads': info.get('download_count', 0)})
+        res.sort(key=lambda r: -r['downloads'])
+        return {'ok': True, 'source': 'Poly Haven (CC0)', 'type': a.type, 'total': len(res), 'results': res[:a.limit]}
+
+    if not a.id:
+        fail('Falta --id (búscalo con asset search)')
+    files = _http_json('%s/files/%s' % (PH_API, a.id))
+    carpeta = os.path.join(_cache_dir(), a.type, a.id)
+    out = {'ok': True, 'source': 'Poly Haven (CC0)', 'id': a.id, 'type': a.type, 'folder': carpeta}
+    if a.type == 'hdri':
+        r, f = _elegir(files.get('hdri', {}), a.res, ['hdr', 'exr'])
+        if not f:
+            fail('El HDRI %s no tiene archivos descargables' % a.id)
+        out['res'] = r
+        out['path'] = _descargar(f['url'], os.path.join(carpeta, os.path.basename(f['url'])))
+        if a.apply:
+            spec = {'scene': {'world': {'hdri': out['path'], 'strength': 1.0}}}
+            out['applied'] = run('build', spec, a)
+    elif a.type == 'texture':
+        claves = {'color': ['Diffuse', 'diff_png', 'Color'], 'normal': ['nor_gl'], 'roughness': ['Rough'],
+                  'metallic': ['Metal'], 'ao': ['AO']}
+        mapas = {}
+        for k, nombres in claves.items():
+            for n in nombres:
+                if n in files:
+                    r, f = _elegir(files[n], a.res, ['jpg', 'png'])
+                    if f:
+                        mapas[k] = _descargar(f['url'], os.path.join(carpeta, os.path.basename(f['url'])))
+                        out['res'] = r
+                    break
+        if not mapas:
+            fail('La textura %s no tiene mapas descargables' % a.id)
+        out['maps'] = mapas
+        out['material'] = {'name': a.material or a.id, 'maps': mapas, 'textureScale': 2.0}
+        if a.apply:
+            out['applied'] = run('build', {'materials': [out['material']]}, a)
+    else:
+        r, f = _elegir(files.get('gltf', {}), a.res, ['gltf'])
+        if not f:
+            fail('El modelo %s no tiene versión glTF' % a.id)
+        out['res'] = r
+        principal = _descargar(f['url'], os.path.join(carpeta, os.path.basename(f['url'])))
+        for rel, inc in (f.get('include') or {}).items():
+            _descargar(inc['url'], os.path.join(carpeta, *rel.split('/')))
+        out['path'] = principal
+        if a.apply:
+            out['applied'] = run('import', {'path': principal, 'name': a.id}, a)
+    return out
+
+
 def cmd_check(a):
     args = {'tolerance': a.tolerance}
     if a.objects:
@@ -710,6 +843,24 @@ def main(argv):
     sp.add_argument('--no-align', '--noalign', dest='no_align', action='store_true')
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
+    sp = p('import')
+    sp.add_argument('--path', required=True)
+    sp.add_argument('--name')
+    sp.add_argument('--collection')
+    sp.add_argument('--height', type=float)
+    sp.add_argument('--location')
+    sp.add_argument('--rotation')
+    sp.add_argument('--save')
+    sp = p('asset')
+    sp.add_argument('action', choices=['search', 'get'])
+    sp.add_argument('--type', required=True)
+    sp.add_argument('--query')
+    sp.add_argument('--limit', type=int, default=10)
+    sp.add_argument('--id')
+    sp.add_argument('--res', default='1k', choices=['1k', '2k', '4k', '8k'])
+    sp.add_argument('--apply', action='store_true')
+    sp.add_argument('--material')
+    sp.add_argument('--save')
     sp = p('fit')
     sp.add_argument('--reference', required=True, action='append')
     sp.add_argument('--parts', required=True)
@@ -758,6 +909,10 @@ def main(argv):
         res = cmd_check(a)
     elif a.cmd == 'fit':
         res = cmd_fit(a)
+    elif a.cmd == 'import':
+        res = cmd_import(a)
+    elif a.cmd == 'asset':
+        res = cmd_asset(a)
     else:
         res = cmd_export(a)
     out(res, 0 if res.get('ok') else 1)

@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.8.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.9.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,6 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
+- 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
 - 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave.
 - 👀 **Se revisa a sí mismo**: renderiza vistas de control (iso, frente, arriba...) y corrige lo que se ve mal antes de entregarte.
@@ -119,6 +120,9 @@ blender-steroids y Blender son gratuitos y de código abierto. Tu agente de IA p
 **¿Mis datos salen de mi computadora?**
 blender-steroids habla con Blender en tu PC por un puerto local (solo acepta conexiones de tu propia máquina). Pero tu agente de IA envía lo que escribes, y lo que lee de tu escena, al proveedor de su modelo.
 
+**¿Se conecta a internet?**
+Solo si usas `asset` (búsqueda y descarga en Poly Haven). Todo lo demás es local.
+
 **¿Funciona en Mac o Linux?**
 Sí: el add-on y el puente son Python y hay instalador para los dos (`install.sh`). Busca Blender en `/Applications` (o `~/Applications`) en macOS, y en el paquete, snap, `/opt` o la carpeta descomprimida en tu carpeta personal en Linux. Todavía no se ha probado en un equipo real: si algo falla, abre un *issue*.
 
@@ -192,6 +196,8 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
 | `compare -Reference ref.png -Path c.png [-FitView]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
+| `import -Path m.glb [-Height 0.85]` | Trae un modelo como base: agrupado, escalado y apoyado en el suelo |
+| `asset search\|get -Type hdri\|texture\|model` | Busca y descarga recursos libres de Poly Haven; `-Apply` los usa en la escena |
 | `fit -Reference ref.png [-Reference perfil.png] -Parts partes.json -View fit -View right` | Ajusta escala y posición de las piezas hasta que la silueta coincida con una o varias vistas de referencia |
 | `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |

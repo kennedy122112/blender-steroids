@@ -13,7 +13,7 @@ import math
 import os
 import sys
 import traceback
-from mathutils import Euler, Vector
+from mathutils import Euler, Matrix, Vector
 
 # ----------------------------------------------------------------------------------- utilidades
 
@@ -572,11 +572,59 @@ def _socket(node, *names):
     return None
 
 
+def _texture_maps(m, p, maps, base_dir, scale):
+    """Mapas de imagen (color, normal, rugosidad, metálico, ao) con proyección de caja desde las
+    coordenadas del objeto: no hace falta desplegar UV en las piezas de build."""
+    nt = m.node_tree
+    for n in [n for n in nt.nodes if n.label.startswith('bs_map')]:
+        nt.nodes.remove(n)
+    coord = nt.nodes.new('ShaderNodeTexCoord')
+    mapping = nt.nodes.new('ShaderNodeMapping')
+    coord.label, mapping.label = 'bs_map_coord', 'bs_map_mapping'
+    mapping.inputs['Scale'].default_value = (scale, scale, scale)
+    nt.links.new(coord.outputs['Object'], mapping.inputs['Vector'])
+    x0, y = p.location.x - 700, p.location.y + 300
+
+    def imagen(clave, no_color):
+        tex = nt.nodes.new('ShaderNodeTexImage')
+        tex.label = 'bs_map_' + clave
+        tex.image = bpy.data.images.load(_path(maps[clave], base_dir), check_existing=True)
+        if no_color:
+            tex.image.colorspace_settings.name = 'Non-Color'
+        tex.projection, tex.projection_blend = 'BOX', 0.25
+        nt.links.new(mapping.outputs['Vector'], tex.inputs['Vector'])
+        return tex
+
+    k = 0
+    for clave in ('color', 'roughness', 'metallic', 'ao', 'normal'):
+        if not maps.get(clave):
+            continue
+        tex = imagen(clave, clave != 'color')
+        tex.location = (x0, y - 280 * k)
+        k += 1
+        if clave == 'color':
+            nt.links.new(tex.outputs['Color'], p.inputs['Base Color'])
+        elif clave == 'roughness':
+            nt.links.new(tex.outputs['Color'], p.inputs['Roughness'])
+        elif clave == 'metallic':
+            nt.links.new(tex.outputs['Color'], p.inputs['Metallic'])
+        elif clave == 'normal':
+            nm = nt.nodes.new('ShaderNodeNormalMap')
+            nm.label = 'bs_map_normalnode'
+            nm.location = (x0 + 300, y - 280 * k)
+            nt.links.new(tex.outputs['Color'], nm.inputs['Color'])
+            nt.links.new(nm.outputs['Normal'], p.inputs['Normal'])
+    coord.location, mapping.location = (x0 - 500, y), (x0 - 300, y)
+
+
 def build_material(spec, base_dir):
     m = bpy.data.materials.get(spec['name'])
     created = m is None
     if created:
         m = bpy.data.materials.new(spec['name'])
+    # un material definido en el spec se conserva aunque todavía nadie lo use: Blender borra al guardar
+    # los que no tienen usuarios, y un `asset get --apply` crea el material antes de asignarlo
+    m.use_fake_user = True
     if not m.node_tree:
         import warnings
         with warnings.catch_warnings():
@@ -614,6 +662,8 @@ def build_material(spec, base_dir):
                     setattr(m, attr, val)
                 except Exception:
                     pass
+    if spec.get('maps'):
+        _texture_maps(m, p, spec['maps'], base_dir, float(spec.get('textureScale', 1.0)))
     if spec.get('texture'):
         path = _path(spec['texture'], base_dir)
         tex =next((n for n in nt.nodes if n.type == 'TEX_IMAGE' and n.label == 'bs_texture'), None)
@@ -2051,6 +2101,65 @@ def op_check(args):
                     'revisa sobre todo las fracciones altas y las piezas que deberían ir por fuera.'}
 
 
+def op_import(args):
+    """Importa un modelo (glb, gltf, fbx, obj, stl, ply, usd) como base editable: agrupa sus piezas bajo un
+    vacío con nombre, opcionalmente lo escala a una altura, lo apoya en el suelo y lo coloca."""
+    path = os.path.abspath(args['path'])
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    ext = os.path.splitext(path)[1].lower()
+    antes = set(bpy.data.objects)
+    with _ctx():
+        if ext in ('.glb', '.gltf'):
+            bpy.ops.import_scene.gltf(filepath=path)
+        elif ext == '.fbx':
+            bpy.ops.import_scene.fbx(filepath=path)
+        elif ext == '.obj':
+            bpy.ops.wm.obj_import(filepath=path)
+        elif ext == '.stl':
+            bpy.ops.wm.stl_import(filepath=path)
+        elif ext == '.ply':
+            bpy.ops.wm.ply_import(filepath=path)
+        elif ext in ('.usd', '.usdc', '.usda', '.usdz'):
+            bpy.ops.wm.usd_import(filepath=path)
+        else:
+            raise ValueError('Formato no soportado: %s (glb, gltf, fbx, obj, stl, ply, usd)' % ext)
+    nuevos = [o for o in bpy.data.objects if o not in antes]
+    if not nuevos:
+        raise ValueError('El archivo no trajo objetos')
+    nombre = args.get('name') or os.path.splitext(os.path.basename(path))[0]
+    raiz = bpy.data.objects.new(nombre, None)
+    raiz.empty_display_type, raiz['bs_spec'] = 'PLAIN_AXES', 1
+    coll = _collection(args.get('collection') or nombre)
+    coll.objects.link(raiz)
+    for o in nuevos:
+        _move_to(o, coll)
+        if o.parent is None or o.parent not in nuevos:
+            mw = o.matrix_world.copy()
+            o.parent = raiz
+            o.matrix_world = mw
+    bpy.context.view_layer.update()
+    mallas = [o for o in nuevos if o.type == 'MESH'] or nuevos
+    lo = Vector([min((o.matrix_world @ Vector(c))[i] for o in mallas for c in o.bound_box) for i in range(3)])
+    hi = Vector([max((o.matrix_world @ Vector(c))[i] for o in mallas for c in o.bound_box) for i in range(3)])
+    k = 1.0
+    if args.get('height') and hi.z - lo.z > 1e-9:
+        k = float(args['height']) / (hi.z - lo.z)
+    # el vacío queda en el centro de la base del modelo: así location lo apoya donde se pida
+    pivote = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+    for o in nuevos:
+        if o.parent == raiz:
+            o.matrix_world = Matrix.Translation(-pivote) @ o.matrix_world
+    raiz.scale = (k, k, k)
+    raiz.location = vec3(args.get('location', (0, 0, 0)))
+    if args.get('rotation'):
+        raiz.rotation_euler = [math.radians(a) for a in vec3(args['rotation'])]
+    bpy.context.view_layer.update()
+    d = (hi - lo) * k
+    return {'root': raiz.name, 'objects': [o.name for o in nuevos], 'meshes': sum(1 for o in nuevos if o.type == 'MESH'),
+            'dimensions': r3(d), 'scale': round(k, 4), 'collection': coll.name}
+
+
 def op_export(args):
     path = os.path.abspath(args['path'])
     ext = os.path.splitext(path)[1].lower()
@@ -2097,6 +2206,7 @@ OPS = {
     'compose': op_compose,
     'check': op_check,
     'fit': op_fit,
+    'import': op_import,
 }
 
 
