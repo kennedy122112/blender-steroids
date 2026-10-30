@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.3.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.4.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -190,7 +190,7 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `exec -Script s.py [-Save x.blend]` | Ejecuta código `bpy`; devuelve `result` y `stdout` |
 | `render -Path img.png [...]` | Render (en vivo, sobre una copia en segundo plano) |
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
-| `compare -Reference ref.png -Path c.png` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos por guía) |
+| `compare -Reference ref.png -Path c.png [-FitView]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 

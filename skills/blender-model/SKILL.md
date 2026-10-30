@@ -45,7 +45,13 @@ lejos si no lees la referencia antes. Ve en este orden.
 5. **Lista de control** en cada vuelta: `blender-cli check` (abajo) para piezas flotando, enterradas
    o atravesadas; mira también `-View back` y `right`; proporciones, colores (AgX aclara; si un color se ve lavado, oscurécelo o usa
    `"look": "AgX - Punchy"`), legibilidad de la cara, nada tapado por la cámara.
-6. Repite 4-5 hasta que las diferencias sean de detalle, y dile al usuario cuáles quedan.
+6. **Corrige con medidas, una cosa por vuelta.** Usa `widthByGuide*` y `zByGuide` de `compare`: si la
+   referencia mide 0.61 y el render 0.75 en la guía 7, y esa guía es z 0.60–0.71 m, la pieza a cambiar es
+   la que está a esa altura (no la que sospeches). Anota el `silhouetteIoU` de cada vuelta: si sube, la
+   vuelta sirvió; si baja, deshaz ese cambio.
+7. Repite 4-6 hasta que el IoU deje de subir (menos de 0.01 por vuelta) o las diferencias sean de
+   detalle, y dile al usuario cuáles quedan y el IoU final. Una figura de vinilo bien bloqueada suele
+   quedar en 0.85-0.90; por encima, las diferencias son de forma esculpida, no de proporción.
 
 **Límite honesto**: con primitivas y código se logra muy bien lo hecho de piezas (productos,
 mobiliario, figuras de vinilo, mascotas simples, maquetas). Una referencia esculpida, con anatomía
@@ -122,7 +128,9 @@ con `track: true` lo sigue siempre), `cutter: true` (pieza para restar: alámbri
 `blender-cli check [-Objects a,b] [-Tolerance 0.004]` revisa las mallas visibles en el render (con sus
 modificadores) y devuelve:
 - `floating`: piezas que no tocan nada (garras despegadas, ojos sueltos). Casi siempre es un error.
-- `buried`: piezas al menos 90 % dentro de otra; no se ven (una correa metida en el abrigo).
+- `buried`: piezas con al menos 90 % de su superficie dentro de otra; no se ven (una correa metida en
+  el abrigo). Se mide por área, así que una garra con la base hundida en la mano no cuenta como enterrada.
+  Algunas son a propósito (una llama dentro de un farol de vidrio).
 - `intersecting`: pares que se cruzan, con qué fracción de cada uno queda dentro del otro. Muchas son
   uniones a propósito (orejas en la cabeza, manos en las mangas); fíjate en las que deberían ir **por
   fuera** (un bastón que atraviesa el abrigo, una mano que entra en la cara) y en fracciones altas.
@@ -136,6 +144,9 @@ No calcules a ojo dónde queda la superficie de una pieza curva: deja que blende
   `at` (punto aproximado; solo cuentan las dos coordenadas perpendiculares a `side`) y pone el objeto en el
   punto de contacto, separado `offset` y, con `align`, con su eje Z según la normal. Para ojos, botones,
   remaches, emblemas, cuernos que salen de la piel.
+- **Piezas que sobresalen** (garras, cuernos, púas, botones, orejas): `"anchor": "base"` apoya la base de
+  la pieza (su punto más bajo en Z local; en un `cone`, la base ancha) sobre la superficie, así sale
+  entera hacia afuera. `offset` negativo la hunde un poco para que no se vea la junta (-0.003 a -0.005).
 - **Calcomanías apiladas**: `decal` + `attach`, con un `offset` mayor en cada capa (ojo 0.001, pupila
   0.002, brillo 0.003) para que no parpadeen. Se proyectan por su propio eje y conservan la forma.
 - **`onSurface`** en un `tube` dibuja la línea sobre la superficie: `"onSurface": { "to": "Cabeza", "side":
