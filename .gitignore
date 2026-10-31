@@ -4,3 +4,4 @@
 *.glb
 *.stl
 __pycache__/
+!examples/**/*.png

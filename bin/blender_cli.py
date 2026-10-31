@@ -20,7 +20,7 @@ Uso (toda salida es JSON por stdout):
          [--animation [--frames 1-120]] [--transparent]
   export --path modelo.glb|fbx|obj|stl|ply|usd [--objects a,b]
   compare --reference ref.png --path comparar.png [--view front|...] [--objects a,b] [--preview]
-          [--fit-view] [--no-align] [--no-overlay] [--no-guides]
+          [--fit-view] [--no-align] [--no-overlay] [--no-guides] [--holes fill|keep]
                                             referencia | render alineado a su figura | siluetas
                                             superpuestas, con guías cada 10 % y medidas (IoU, anchos)
   check [--objects a,b] [--tolerance 0.004] piezas que flotan, enterradas o que se atraviesan
@@ -493,6 +493,8 @@ def cmd_compare(a):
         args['overlay'] = False
     if a.fit_view:
         args['fitView'] = True
+    if a.holes:
+        args['holes'] = a.holes
     return on_copy('compare', args, a)
 
 
@@ -514,6 +516,8 @@ def cmd_fit(a):
             'colorWeight': a.colorweight}
     if a.fit_view:
         args['fitView'] = True
+    if a.holes:
+        args['holes'] = a.holes
     return run('fit', args, a)
 
 
@@ -861,6 +865,7 @@ def main(argv):
     sp.add_argument('--no-align', '--noalign', dest='no_align', action='store_true')
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
+    sp.add_argument('--holes', choices=['fill', 'keep'], help='huecos cerrados: fill (tapar, por defecto) o keep')
     sp = p('import')
     sp.add_argument('--path', required=True)
     sp.add_argument('--name')
@@ -888,6 +893,7 @@ def main(argv):
     sp.add_argument('--detail', type=int, default=160)
     sp.add_argument('--colors', action='store_true')
     sp.add_argument('--colorweight', '--color-weight', dest='colorweight', type=float, default=0.3)
+    sp.add_argument('--holes', choices=['fill', 'keep'])
     sp.add_argument('--save')
     sp = p('walk')
     sp.add_argument('--spec', required=True)

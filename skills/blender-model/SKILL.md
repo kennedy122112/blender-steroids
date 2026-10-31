@@ -1,6 +1,6 @@
 ---
 name: blender-model
-description: Crea y modifica escenas 3D reales y editables en Blender a partir de lenguaje natural - objetos, muebles, productos, maquetas, escenarios, texto 3D, materiales, luces, cámara y animación simple - y las revisa renderizando. Úsala cuando el usuario diga "modela en Blender", "crea una escena / un objeto / un producto en 3D", "arma una maqueta", "pon luces y cámara", "cambia el material", "anima esto", "hazme un logo 3D", "build X in Blender".
+description: Crea y modifica escenas 3D reales y editables en Blender a partir de lenguaje natural - objetos, muebles, productos, maquetas, escenarios, texto 3D, materiales, luces, cámara y animación simple - y las revisa renderizando. Úsala cuando el usuario diga "modela en Blender", "crea una escena / un objeto / un producto en 3D", "arma una maqueta", "pon luces y cámara", "cambia el material", "anima esto", "hazme un logo 3D", "convierte esta silueta / este logo en 3D", "build X in Blender".
 ---
 
 # Modelar en Blender
@@ -37,7 +37,9 @@ lejos si no lees la referencia antes. Ve en este orden.
 2. **Boceto de bloques**: solo las formas grandes con su color plano. Compara (paso 4) y ajusta
    proporciones y silueta **hasta que coincidan** antes de agregar cualquier detalle.
 3. **Detalles** de lo grande a lo pequeño: accesorios, después la cara (calcomanías con `attach`,
-   líneas con `onSurface`), al final materiales finos y luz.
+   líneas con `onSurface`), al final materiales finos y luz. Las piezas planas de forma libre que se
+   ven de frente (placas, emblemas, llamas, aletas, alas planas, orejas recortadas) no las armes a ojo
+   con `mesh`: recorta su silueta de la referencia y constrúyelas con `outline` (abajo).
 4. **Compara de verdad**, no de memoria: `blender-cli compare -Reference ref.png -Path comparar.png
    [-View front]` renderiza con el formato de la referencia y pone las dos imágenes lado a lado con
    guías horizontales cada 10 % del alto. Léela y anota diferencias concretas («la cabeza llega a la
@@ -115,6 +117,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
+| `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso). Ver «Siluetas» |
 | `decal` | `size`: número o `[ancho, alto]`. Pintura plana (ojos, mejillas, manchas, logos, parches) que se pega con `attach` a la superficie y sigue su curvatura |
 | `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida que no salen de lo anterior). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |
@@ -127,6 +130,30 @@ Comunes a todos: `location` [m], `rotation` [grados XYZ], `scale`, `dimensions` 
 `materials` + `faceMaterials` (índice por cara), `collection`, `parent` (la `location` que das es la del
 mundo), `smooth`, `hidden`, `hideRender`, `display` (wire, solid…), `lookAt` (objeto o `[x,y,z]`;
 con `track: true` lo sigue siempre), `cutter: true` (pieza para restar: alámbrica y fuera del render).
+
+### Siluetas desde una imagen o puntos (`outline`)
+Para piezas **planas o de grosor uniforme cuya forma está en su contorno**: logos y emblemas 3D,
+letreros recortados, engranajes, llamas, rayos, placas, galletas y figuras de cortador, aletas, la
+silueta de un personaje para una maqueta o un *standee*. Lee el contorno con precisión de subpíxel,
+encuentra los huecos (una dona sale con su agujero) y simplifica cada contorno con el método que mejor
+le va. **`method: "auto"`** decide por contorno: si la mayor parte del giro está en esquinas de más de
+45°, lo deja como **polígono** con las esquinas reconstruidas (un rayo vuelve a sus 8 vértices); si es
+una curva suave, usa una **serie de Fourier** (sin facetas). Fuerza `fourier` o `polygon` solo si
+tienes motivo: Fourier ondula junto a las esquinas vivas (efecto Gibbs) y el polígono facetea las curvas.
+
+El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `order` o `vertices`,
+`hausdorffPercent` (desviación máxima del borde, en % de la diagonal), `normalizedMaxErrorPercent`
+(Fourier) y `targetMet`. Si un contorno no llegó a la tolerancia hay un aviso: dilo, no lo des por bueno.
+
+- **La imagen**: una sola figura, recortada, con buen contraste con un fondo liso (o PNG transparente).
+  Un render de la referencia con luz y sombras no sirve tal cual: recorta la pieza o píntala plana.
+- **Tamaño**: `height` o `width` del conjunto en metros; con `origin: "bottom"` queda apoyada en el piso.
+- `tolerance` 0.25 % va bien a 1024 px; con imágenes chicas (< 400 px) usa 0.5 (el antialias redondea
+  las esquinas ~1 px).
+- Bordes suaves: agrega un modificador `bevel` (`width` 0.005-0.01, `segments` 2).
+- **No es para** volúmenes: una sola silueta no da profundidad. Un personaje o un objeto redondo se
+  modela con las primitivas; `outline` sirve para sus partes planas.
+- Para comparar una pieza con huecos contra su imagen usa `compare -Holes keep`.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no

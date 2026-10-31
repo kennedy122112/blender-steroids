@@ -61,9 +61,20 @@ devuelve `views` con el IoU de cada una y `meanIoU`.
 
 `-NoAlign` (sin alinear), `-NoOverlay` (sin panel de siluetas), `-NoGuides`. Úsalo en cada vuelta de un
 trabajo con referencia (ver `blender-model`) y describe las diferencias con estas medidas, no de memoria.
-Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista y sin
-iconos ni gizmos cerca de la figura: compare se queda con la región más grande, pero un icono pegado a
-la figura en la misma fila la ensancha (se ve como rayas cian en el panel de siluetas).
+
+**Cómo separa la figura**: se queda con la región más grande y con las partes sueltas que midan al
+menos el 10 % de ella, conserva las partes finas y las que quedan separadas en una misma fila (dientes,
+cuernos, dedos, un brazo despegado del torso) y borra líneas de hasta 2 px (cuadrícula del visor).
+**Huecos** (`-Holes`): con `fill` (por defecto) tapa los huecos cerrados y las zonas interiores que
+solo se abren al fondo por una rendija de ~6 px, en la referencia y en el render por igual: así una
+zona del mismo color que el fondo (una barriga blanca sobre fondo blanco) no cuenta como agujero.
+Con `keep` los conserva: úsalo para piezas con agujeros reales (engranajes, logos, una dona). `fit`
+acepta el mismo `-Holes`.
+
+Si la referencia tiene varias vistas o barras del programa, recórtala antes a una sola vista: una
+segunda figura o un panel grande en la imagen entran en la silueta. Desde 1.11 la silueta es más fiel
+y el IoU suele salir unas centésimas más alto que con versiones anteriores para el mismo modelo
+(no compares números entre versiones).
 
 ## Animación
 `blender-cli render -Path carpeta/toma.png -Animation [-Frames 1-120]` deja `toma_0001.png`,
