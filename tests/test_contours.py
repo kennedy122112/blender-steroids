@@ -169,5 +169,48 @@ class DesdeImagen(unittest.TestCase):
         self.assertGreater(C.area(salida[0]['outer']), 0)               # exterior antihorario
 
 
+
+def jarron(z):
+    """Perfil de un jarrón original: base, panza, cuello angosto y boca abierta (z de 0 a 1)."""
+    return 0.16 + 0.12 * np.sin(np.pi * z * 1.1) ** 2 - 0.1 * np.exp(-((z - 0.82) / 0.07) ** 2) + 0.05 * z ** 6
+
+
+def silueta_jarron(asa=False):
+    z = np.linspace(0, 1, 300)
+    r = jarron(z)
+    lado = np.column_stack([r, z])
+    pol = np.vstack([lado, (lado * [-1, 1])[::-1]]) * 0.8 - [0, 0.4]           # cabe en -0.5..0.5
+    regs = [{'outer': pol}]
+    if asa:                                                          # asa a la derecha: un aro
+        regs = [{'outer': pol}, {'outer': circulo(0.14, 0.33, 0.05), 'holes': [circulo(0.08, 0.33, 0.05)]}]
+    return regs
+
+
+class Torno(unittest.TestCase):
+    def comparar(self, perfil, alto=1.0):
+        z = np.linspace(0.02, 0.98, 200) * alto
+        r = np.interp(z, perfil[:, 1], perfil[:, 0])
+        return np.abs(r - jarron(z / alto) * alto).max()
+
+    def test_jarron(self):
+        perfil, info = C.lathe_profile(imagen(silueta_jarron(), n=512), size=1.0)
+        self.assertTrue(info['targetMet'])
+        self.assertAlmostEqual(info['height'], 1.0, places=3)
+        self.assertLess(self.comparar(perfil), 0.006)              # < 0.6 % del alto
+        self.assertLess(info['asymmetryPercent'], 0.5)
+        self.assertLess(info['keyPoints'], 60)
+
+    def test_asa_de_un_lado(self):
+        img = imagen(silueta_jarron(asa=True), n=512)
+        _, ambos = C.lathe_profile(img, size=1.0)
+        self.assertGreater(ambos['asymmetryPercent'], 5)           # el aviso de que no es de revolución
+        perfil, info = C.lathe_profile(img, size=1.0, side='left')
+        self.assertLess(self.comparar(perfil), 0.008)
+
+    def test_lado_invalido(self):
+        with self.assertRaises(ValueError):
+            C.lathe_profile(imagen(silueta_jarron()), side='arriba')
+
+
 if __name__ == '__main__':
     unittest.main()

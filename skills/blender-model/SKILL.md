@@ -114,7 +114,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `monkey` | — |
 | `superellipsoid` | `size: [x, y, z]` total, `roundness`: número o `[lados, arriba-abajo]`, 0 = caja, 1 = elipsoide, >1 puntiaguda. Cabezas y cuerpos de vinilo, cojines, piedras, jabones |
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
-| `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas |
+| `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
 | `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso). Ver «Siluetas» |
@@ -154,6 +154,24 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
 - **No es para** volúmenes: una sola silueta no da profundidad. Un personaje o un objeto redondo se
   modela con las primitivas; `outline` sirve para sus partes planas.
 - Para comparar una pieza con huecos contra su imagen usa `compare -Holes keep`.
+
+### Torno desde una foto (`lathe` con `image`)
+Para objetos **de revolución** (jarrones, botellas, vasos, faroles, peones, columnas, lámparas): en vez
+de escribir el `profile` a ojo, pásale la foto de lado y se mide. Usa `height` (o `width`) en metros. El
+eje es la vertical que mejor centra la silueta. Con `side: "both"` (por defecto) promedia las dos
+mitades; si de un lado hay un asa, un pico o una etiqueta que sobresale, usa `side: "left"` o
+`"right"` (la mitad limpia) y agrega el asa aparte (un `torus` o un `tube`).
+
+El resultado de `build` trae en `outlines` el `profile` medido (puedes copiarlo al spec y retocarlo),
+`keyPoints`, `maxErrorPercent`, `targetMet` y `asymmetryPercent`. Si la asimetría pasa del 3 % con
+`side: "both"` hay un aviso: o hay algo de un solo lado, o la foto no está de lado.
+
+- **La foto**: de lado y a la altura del objeto, lo más lejos y con el zoom más largo posible (un gran
+  angular muestra la boca desde arriba y deforma el perfil), sobre un fondo liso. Luces y brillos no
+  molestan: el borde se mide contra el contraste local.
+- El perfil sale suave entre esquinas (64 puntos, `profileRings`) y con las esquinas exactas (el borde
+  de la boca, la base). Probado con un jarrón con asa fotografiado: radio a 0.77 mm del real en 40 cm.
+- Es una superficie sin grosor (como `lathe`); para paredes, `modifiers: [{"type": "solidify"}]`.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no

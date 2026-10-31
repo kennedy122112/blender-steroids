@@ -9,6 +9,7 @@
     { "name": "Fuego", "color": "#ff7a1a", "roughness": 0.4, "emission": "#ff5a00", "emissionStrength": 0.6 },
     { "name": "Acero", "color": "#b8bec7", "metallic": 1, "roughness": 0.35 },
     { "name": "Rayo", "color": "#ffd23f", "roughness": 0.3 },
+    { "name": "Ceramica", "color": "#2f6f8f", "roughness": 0.35, "coat": 0.5 },
     { "name": "Piso", "color": "#30353d", "roughness": 0.9 }
   ],
   "objects": [
@@ -23,7 +24,9 @@
       "material": "Rayo",
       "points": [[0.05, 0.42], [-0.2, 0.02], [-0.03, 0.03], [-0.16, -0.4], [0.22, 0.08], [0.04, 0.07],
                  [0.17, 0.3], [0.1, 0.42]] },
+    { "name": "Jarron", "type": "lathe", "image": "siluetas/jarron.png", "height": 0.45, "side": "left", "segments": 96,
+      "smooth": true, "location": [1.75, 0, 0], "material": "Ceramica" },
     { "name": "Sol", "type": "light", "light": "sun", "energy": 3, "rotation": [50, 0, 30] },
-    { "name": "Camara", "type": "camera", "frame": ["Llama", "Engrane", "Rayo"], "view": "front", "margin": 1.2 }
+    { "name": "Camara", "type": "camera", "frame": ["Llama", "Engrane", "Rayo", "Jarron"], "view": "front", "margin": 1.2 }
   ]
 }

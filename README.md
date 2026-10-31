@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.11.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.12.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,7 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
-- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros.
+- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros. Y de la foto de lado de un jarrón, una botella o un farol saca su perfil y lo gira.
 - 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
@@ -207,7 +207,7 @@ Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-c
 | `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
-El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo).
+El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo; y `lathe` desde la foto de un jarrón con asa).
 
 ### Estructura del repo
 
