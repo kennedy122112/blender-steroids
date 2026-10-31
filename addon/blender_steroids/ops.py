@@ -247,7 +247,7 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
-             'plane', 'side', 'profileRings', 'output')
+             'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
@@ -362,7 +362,8 @@ def _lathe(bm, o, name=None):
     """Perfil girado alrededor de Z: `profile` = [[radio, z], ...] de abajo arriba (jarrones, troncos,
     botellas, peones, lámparas). Un radio 0 cierra en un punto. O `image`: la silueta del objeto visto
     de lado, de la que se mide el perfil (`height` o `width` en metros, `tolerance` % del alto, `side`
-    both/left/right si de un lado hay un asa, `threshold`); las medidas van a `outlines` de build."""
+    both/left/right si de un lado hay un asa, `threshold`, `range` [desde, hasta] en fracción del alto para
+    hacer solo una franja: así cada parte lleva su material); las medidas van a `outlines` de build."""
     if o.get('image'):
         from . import contours
         px, ruta = _image_px(o)
@@ -370,7 +371,7 @@ def _lathe(bm, o, name=None):
         perfil, info = contours.lathe_profile(px, size=size, axis=axis,
                                               tolerance=float(o.get('tolerance', 0.25)),
                                               side=o.get('side', 'both'), threshold=o.get('threshold'),
-                                              rings=int(o.get('profileRings', 64)))
+                                              rings=int(o.get('profileRings', 64)), z_range=o.get('range'))
         info['profile'] = [[round(float(r), 4), round(float(z), 4)] for r, z in perfil]
         _record(name, o, info, ruta)
         o = dict(o, profile=info['profile'])
@@ -559,7 +560,9 @@ def _outline_loops(o):
         raise ValueError('outline necesita image (una silueta) o points')
     size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
     regs, info = contours.outline(fuente, size=size, axis=axis, tolerance=float(o.get('tolerance', 0.25)),
-                                  method=o.get('method', 'auto'), threshold=o.get('threshold'))
+                                  method=o.get('method', 'auto'), threshold=o.get('threshold'),
+                                  color=o.get('color') if o.get('image') else None,
+                                  color_tol=float(o.get('colorTolerance', 0.15)))
     return regs, info, ruta
 
 
@@ -1133,16 +1136,16 @@ def _attach(o, spec, warnings):
         # la base de la pieza (su punto más bajo en Z local) queda sobre la superficie: garras, cuernos,
         # botones y orejas sobresalen enteros sin calcular a mano la mitad de su largo
         off -= min(v.co.z for v in o.data.vertices) * o.scale.z
+    # se fija la matriz de MUNDO y Blender deduce la local: con padre (y su matrix_parent_inverse) poner
+    # location/rotation a mano aplicaba dos veces la transformación del padre
+    bpy.context.view_layer.update()
+    loc, rot, esc = o.matrix_world.decompose()
     if a.get('align', True):
         o.rotation_mode = 'XYZ'
-        q = n.to_track_quat('Z', 'Y')
+        rot = n.to_track_quat('Z', 'Y')
         if a.get('spin'):
-            q = q @ Euler((0, 0, math.radians(float(a['spin']))), 'XYZ').to_quaternion()
-        o.rotation_euler = q.to_euler()
-    if o.parent:
-        o.location = o.parent.matrix_world.inverted() @ (p + n * off)
-    else:
-        o.location = p + n * off
+            rot = rot @ Euler((0, 0, math.radians(float(a['spin']))), 'XYZ').to_quaternion()
+    o.matrix_world = Matrix.Translation(p + n * off) @ rot.to_matrix().to_4x4() @ Matrix.Diagonal(esc.to_4d())
     if spec.get('type', '').lower() == 'decal' or a.get('wrap'):
         # se pega a la curva de la superficie, apilado sobre lo que haya debajo según offset
         # proyectado por su propio eje Z (la normal): conserva la forma; «el punto más cercano» la
@@ -1153,6 +1156,12 @@ def _attach(o, spec, warnings):
         m.use_project_z = True
         m.use_negative_direction = m.use_positive_direction = True
         o.modifiers.move(o.modifiers.find('bs_wrap'), 0)
+        if o.type == 'MESH' and len(o.data.vertices) < 400:
+            # una pieza de pocos vértices (un outline de polígono: triángulos largos y planos) no tiene
+            # puntos que pegar a la curva y la superficie la atraviesa: se subdivide antes de envolverla
+            sub = o.modifiers.get('bs_wrap_sub') or o.modifiers.new('bs_wrap_sub', 'SUBSURF')
+            sub.subdivision_type, sub.levels, sub.render_levels = 'SIMPLE', 4, 4
+            o.modifiers.move(o.modifiers.find('bs_wrap_sub'), 0)
 
 
 def _on_surface(o, spec, warnings):
@@ -1170,7 +1179,10 @@ def _on_surface(o, spec, warnings):
     if len(pts) < 2:
         warnings.append('«%s»: la línea no toca a «%s» desde %s' % (o.name, tgt.name, side))
         return
-    o.location, o.rotation_euler, o.scale = (0, 0, 0), (0, 0, 0), (1, 1, 1)
+    # los puntos están en coordenadas del mundo: la matriz de mundo queda en identidad (con padre,
+    # poner la local en cero no alcanza)
+    bpy.context.view_layer.update()
+    o.matrix_world = Matrix.Identity(4)
     old = o.data
     o.data = build_mesh(dict(spec, points=pts, curve=None), o.name)
     for m in old.materials:
@@ -1320,26 +1332,39 @@ def _apply_motion(a, warnings):
         raise ValueError('frames: el final (%d) es menor que el inicio (%d)' % (f1, f0))
     frames = list(range(f0, f1 + 1))
     times = [(f - f0) / fps for f in frames]
-    m = dict(a['motion'])
-    error, aviso = dynamics.aliasing(dynamics.natural_frequency(m), fps)
-    if error:
-        raise ValueError('«%s»: %s' % (o.name, error))
-    accel = None
-    if m.get('kind') == 'follow':
-        guia = _obj(m.get('leader') or '')
-        ge = 'xyz'.index(str(m.get('leaderAxis', 'z')).lower())
-        antes = s.frame_current
-        pos = []
-        for f in range(f0 - 1, f1 + 2):
-            s.frame_set(f)
-            pos.append(guia.matrix_world.translation[ge])
-        s.frame_set(antes)
-        dt = 1 / fps
-        accel = [(pos[i + 1] - 2 * pos[i] + pos[i - 1]) / (dt * dt) for i in range(1, len(pos) - 1)]
-    vals, info = dynamics.simulate(m, times, accel)
-    if aviso:
-        info['warnings'].append(aviso)
-        warnings.append('«%s» %s: %s' % (o.name, canal, aviso))
+    # uno o varios movimientos (lista) que se suman en el mismo canal: p. ej. oscillate + noise
+    ms = [dict(x) for x in (a['motion'] if isinstance(a['motion'], list) else [a['motion']])]
+    if not ms:
+        raise ValueError('motion vacío')
+    vals, infos, avisos = [0.0] * len(times), [], []
+    for m in ms:
+        error, aviso = dynamics.aliasing(dynamics.natural_frequency(m), fps)
+        if error:
+            raise ValueError('«%s»: %s' % (o.name, error))
+        accel = None
+        if m.get('kind') == 'follow':
+            guia = _obj(m.get('leader') or '')
+            ge = 'xyz'.index(str(m.get('leaderAxis', 'z')).lower())
+            antes = s.frame_current
+            pos = []
+            for f in range(f0 - 1, f1 + 2):
+                s.frame_set(f)
+                pos.append(guia.matrix_world.translation[ge])
+            s.frame_set(antes)
+            dt = 1 / fps
+            accel = [(pos[i + 1] - 2 * pos[i] + pos[i - 1]) / (dt * dt) for i in range(1, len(pos) - 1)]
+        v, inf = dynamics.simulate(m, times, accel)
+        vals = [x + y for x, y in zip(vals, v)]
+        infos.append(inf)
+        if aviso:
+            avisos.append(aviso)
+            warnings.append('«%s» %s: %s' % (o.name, canal, aviso))
+    simulado = any(x['mode'] == 'ode_simulated' for x in infos)
+    info = {'kind': '+'.join(m.get('kind', '?') for m in ms), 'mode': 'ode_simulated' if simulado else 'kinematic',
+            'frames': len(vals), 'maxAbs': round(max(abs(v) for v in vals), 6), 'warnings': avisos,
+            'elapsedMs': round(sum(x['elapsedMs'] for x in infos), 1)}
+    if simulado:
+        info['substeps'] = sum(x.get('substeps', 0) for x in infos)
     # valor de reposo: el que tenía antes del primer motion de ese canal (guardado), o `base`
     bases = json.loads(o.get('bs_motion_base', '{}'))
     if 'base' in a:
@@ -1374,7 +1399,7 @@ def _apply_motion(a, warnings):
                 for kp in fc.keyframe_points:
                     kp.interpolation = 'LINEAR'
     registro = json.loads(o.get('bs_motion', '{}'))
-    registro[canal] = {'kind': m.get('kind'), 'mode': info['mode'], 'params': m, 'base': base,
+    registro[canal] = {'kind': info['kind'], 'mode': info['mode'], 'params': ms if len(ms) > 1 else ms[0], 'base': base,
                        'frames': [f0, f1], 'fps': fps}
     o['bs_motion'] = json.dumps(registro, ensure_ascii=False)
     return dict(info, object=o.name, channel=canal, frameRange=[f0, f1], fps=fps)
@@ -2833,11 +2858,13 @@ def op_contour(args):
     tol = float(o.get('tolerance', 0.25))
     if o['type'] == 'lathe':
         perfil, info = contours.lathe_profile(px, size=size, axis=axis, tolerance=tol, side=o.get('side', 'both'),
-                                              threshold=o.get('threshold'), rings=int(o.get('profileRings', 64)))
+                                              threshold=o.get('threshold'), rings=int(o.get('profileRings', 64)),
+                                              z_range=o.get('range'))
         res = dict(_public(info), profile=[[round(float(r), 4), round(float(z), 4)] for r, z in perfil])
     else:
         regs, info = contours.outline(px, size=size, axis=axis, tolerance=tol, method=o.get('method', 'auto'),
-                                      threshold=o.get('threshold'))
+                                      threshold=o.get('threshold'), color=o.get('color'),
+                                      color_tol=float(o.get('colorTolerance', 0.15)))
         res = _public(info)
         if args.get('coefficients'):
             for l, c in zip(res['loops'], info['loops']):
@@ -2855,6 +2882,10 @@ def op_contour(args):
             _draw_polyline(img, np.array([[eje, filas.min()], [eje, filas.max()]]), (1, 0.85, 0), False)
             for lado in (-1, 1):
                 _draw_polyline(img, np.column_stack([eje + lado * perfil[:, 0] / k, filas]), (0, 0.8, 1), False, 2)
+            for b in info['bands'][1:]:                     # límites de las franjas de color, en verde
+                fila = -(y0 + b['from'] * info['height'] / k)
+                ancho = info['maxRadius'] / k * 1.15
+                _draw_polyline(img, np.array([[eje - ancho, fila], [eje + ancho, fila]]), (0.2, 0.9, 0.2), False)
         else:
             k, c = fr['k'], np.array(fr['center'])
             lazos = [l for r in regs for l in [r['outer']] + r['holes']]

@@ -18,12 +18,64 @@ FRACCION_ESQUINAS = 0.5      # si más de esta parte del giro total está en esq
 
 # ----------------------------------------------------------------------------------- imagen -> lazos
 
-def coverage(rgba, threshold=None):
+def hex_rgb(h):
+    """'#rrggbb' -> (r, g, b) en 0..1 (los mismos valores que trae la imagen)."""
+    h = str(h).lstrip('#')
+    if len(h) != 6:
+        raise ValueError('color debe ser #rrggbb')
+    return np.array([int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)])
+
+
+def _max_local(d, r=3):
+    h, w = d.shape
+    pad = np.pad(d, r, mode='edge')
+    out = d.copy()
+    for dy in range(2 * r + 1):
+        for dx in range(2 * r + 1):
+            np.maximum(out, pad[dy:dy + h, dx:dx + w], out=out)
+    return out
+
+
+def color_coverage(rgba, color, tol=0.15):
+    """Cobertura 0..1 de lo que es de un color (una estrella amarilla sobre papel rojo), subpíxel. Cada
+    píxel se mira como mezcla del color buscado y del color más distinto que tiene al lado (7x7): vale la
+    parte que tiene del color buscado, pero solo si de verdad es esa mezcla y el color buscado está a uno
+    o dos píxeles (un dorado junto al fondo o junto al rojo no es "algo de amarillo", es otro color).
+    Donde todo alrededor se parece al color, cuenta la distancia."""
+    rgb = np.asarray(rgba, np.float64)[..., :3]
+    c = hex_rgb(color)
+    tol = float(tol)
+    d = np.abs(rgb - c).max(axis=-1)
+    h, w = d.shape
+    pd, pr = np.pad(d, 3, mode='edge'), np.pad(rgb, ((3, 3), (3, 3), (0, 0)), mode='edge')
+    otro_d, otro = d.copy(), rgb.copy()
+    for dy in range(7):
+        for dx in range(7):
+            cand = pd[dy:dy + h, dx:dx + w]
+            m = cand > otro_d
+            otro_d[m] = cand[m]
+            otro[m] = pr[dy:dy + h, dx:dx + w][m]
+    co = c - otro
+    L2 = (co * co).sum(-1)
+    alfa = ((rgb - otro) * co).sum(-1) / np.maximum(L2, 1e-12)
+    resto = np.abs(rgb - (otro + alfa[..., None] * co)).max(axis=-1)
+    # un borde de verdad tiene el color buscado a uno o dos píxeles: sin eso, un dorado pegado al rojo
+    # pasaría por "mezcla de rojo y amarillo"
+    junto = -_max_local(-d, 2) <= tol
+    mezcla = np.where((resto <= tol) & junto, np.clip(alfa, 0, 1), 0.0)
+    cerca = np.clip(1 - d / (2 * tol), 0, 1)
+    return np.where(L2 > (2 * tol) ** 2, mezcla, cerca)
+
+
+def coverage(rgba, threshold=None, color=None, color_tol=0.15):
     """Cobertura 0..1 del sujeto. Con transparencia, el alfa; si no, la distancia al color de fondo (la
     mediana del borde) relativa a la del sujeto, para que el borde antialias dé la posición subpíxel.
     Esa distancia se mide contra el sujeto que el borde tiene al lado (máximo en 7x7 px): en una foto el
     lado iluminado contrasta mucho menos con el fondo que el lado en sombra, y una escala única se come
-    el borde claro. `threshold` (0..1) fija a mano la distancia de color que separa sujeto y fondo."""
+    el borde claro. `threshold` (0..1) fija a mano la distancia de color que separa sujeto y fondo.
+    Con `color` ('#rrggbb') el sujeto es lo que tiene ese color (color_coverage)."""
+    if color:
+        return color_coverage(rgba, color, color_tol)
     rgba = np.asarray(rgba, np.float64)
     if rgba.shape[-1] == 4 and rgba[..., 3].min() < 0.5:
         return rgba[..., 3]
@@ -38,12 +90,7 @@ def coverage(rgba, threshold=None):
     global_ = np.clip(d / max(escala, 1e-6), 0, 1)
     ruido = float(np.percentile(np.abs(borde - fondo).max(axis=-1), 95))
     minimo = max(0.04, 3 * ruido)                    # contraste mínimo para contar como sujeto
-    h, w = d.shape
-    pad = np.pad(d, 3, mode='edge')
-    local = d.copy()
-    for dy in range(7):
-        for dx in range(7):
-            np.maximum(local, pad[dy:dy + h, dx:dx + w], out=local)
+    local = _max_local(d)
     relativo = np.where(local > 2 * minimo, d / np.maximum(local, 1e-6), 0.0)
     return np.maximum(global_, relativo)
 
@@ -333,7 +380,7 @@ def simplify(p, tol, method='auto', samples=1024, max_order=200):
 # ----------------------------------------------------------------------------------- todo junto
 
 def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='auto', threshold=None,
-            min_area_frac=0.0005, samples=1024, max_order=200):
+            min_area_frac=0.0005, samples=1024, max_order=200, color=None, color_tol=0.15):
     """Contornos simplificados listos para construir.
 
     loops_or_image: imagen RGBA (h, w, 4) con filas de arriba abajo, o una lista de regiones
@@ -346,7 +393,7 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
     import time
     inicio = time.perf_counter()
     if isinstance(loops_or_image, np.ndarray):
-        f = coverage(loops_or_image, threshold)
+        f = coverage(loops_or_image, threshold, color, color_tol)
         h, w = f.shape
         regs = regions(trace(f), min_area=min_area_frac * h * w)
         if not regs:
@@ -424,7 +471,7 @@ def _rdp_abierto(q, tol):
 
 
 def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', threshold=None, levels=600,
-                  rings=64):
+                  rings=64, z_range=None):
     """Perfil de torno [[radio, z], ...] (de abajo arriba, en metros, z desde 0) a partir de la silueta de
     un objeto de revolución visto de lado (jarrón, botella, farol, peón).
 
@@ -432,11 +479,14 @@ def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', t
     'both' promedia las dos mitades; 'left' o 'right' usa solo esa (cuando del otro lado hay un asa o un
     pico que no es de revolución). size: medida en metros en `axis` ('height' o 'width'; si falta, 1 m de
     alto). tolerance: % del alto. rings: puntos del perfil de salida (suave entre esquinas; 0 = solo los
-    vértices clave). Devuelve (perfil, info) con la asimetría medida: si las dos mitades
-    difieren mucho, la figura no es de revolución (o la foto no está de lado) y el aviso lo dice."""
+    vértices clave). z_range: [desde, hasta] en fracción del alto (0 = abajo): solo esa franja, con la
+    misma escala y el mismo eje que el todo, para hacer cada parte con su material. Devuelve (perfil,
+    info) con la asimetría medida (si las dos mitades difieren mucho, la figura no es de revolución o la
+    foto no está de lado) y `bands`: las franjas de color a lo largo del alto (de abajo arriba)."""
     if side not in ('both', 'left', 'right'):
         raise ValueError('side debe ser both, left o right')
     f = coverage(rgba, threshold)
+    rgb = np.asarray(rgba, np.float64)[..., :3]
     h, w = f.shape
     regs = regions(trace(f), min_area=0.0005 * h * w)
     if not regs:
@@ -444,9 +494,8 @@ def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', t
     pol = max((r['outer'] for r in regs), key=lambda l: abs(area(l))) * [1, -1]      # y hacia arriba
     y0, y1 = pol[:, 1].min(), pol[:, 1].max()
     alto = y1 - y0
-    ys = np.linspace(y0, y1, int(levels))
-    ys[0] += 1e-6 * alto
-    ys[-1] -= 1e-6 * alto
+    # medio píxel hacia adentro en los extremos: una base plana justo en y0 solo se toca en una esquina
+    ys = np.linspace(y0 + 0.5, y1 - 0.5, int(levels))
     filas = []
     for y in ys:
         xs = _cortes(pol, y)
@@ -462,15 +511,91 @@ def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', t
     tol = float(tolerance) / 100 * alto * k
     simple = _rdp_abierto(perfil, tol)
     salida = _suave(perfil, simple, int(rings)) if rings else simple
-    asim = float(np.abs(izq - der).max() * k)
-    err = _desvio(perfil, salida)
-    info = {'height': round(float(alto * k), 4), 'maxRadius': round(float(perfil[:, 0].max()), 4),
+    bandas = _bands(rgb, filas, y0, alto, k, perfil)
+    medido, dif = perfil, np.abs(izq - der)
+    if z_range is not None:
+        a_, b_ = (float(x) for x in z_range)
+        if not 0 <= a_ < b_ <= 1:
+            raise ValueError('range debe ser [desde, hasta] con 0 <= desde < hasta <= 1')
+        z0, z1 = a_ * alto * k, b_ * alto * k
+        salida = _recortar(salida, z0, z1)
+        # error y asimetría de esa franja, no del objeto entero
+        dentro = (perfil[:, 1] >= z0) & (perfil[:, 1] <= z1)
+        medido, dif = perfil[dentro], dif[dentro]
+    asim = float(dif.max() * k) if len(dif) else 0.0
+    err = _desvio(medido, salida) if len(medido) else 0.0
+    info = {'height': round(float(alto * k), 4), 'maxRadius': round(float(salida[:, 0].max()), 4),
             'points': int(len(salida)), 'keyPoints': int(len(simple)), 'side': side,
             'tolerancePercent': float(tolerance),
             'maxErrorPercent': round(float(100 * err / (alto * k)), 3), 'targetMet': bool(err <= tol + 1e-12),
-            'asymmetryPercent': round(float(100 * asim / (alto * k)), 2),
+            'asymmetryPercent': round(float(100 * asim / (alto * k)), 2), 'bands': bandas,
             '_frame': {'k': k, 'axis': eje, 'y0': float(y0)}}
     return salida, info
+
+
+def _recortar(perfil, z0, z1):
+    """La parte del perfil entre las alturas z0 y z1, con los extremos interpolados."""
+    z = perfil[:, 1]
+    dentro = perfil[(z > z0) & (z < z1)]
+    ini = [np.interp(z0, z, perfil[:, 0]), z0]
+    fin = [np.interp(z1, z, perfil[:, 0]), z1]
+    return np.vstack([[ini], dentro, [fin]])
+
+
+def _bands(rgb, filas, y0, alto, k, perfil, salto=0.12, minimo=0.015):
+    """Franjas de color a lo largo del alto: el color mediano de cada fila dentro de la silueta, cortado
+    donde cambia más de `salto` y sin franjas de menos de `minimo` del alto (se unen a la vecina más
+    parecida). Para hacer cada parte del torno con su material (tapas doradas, cuerpo rojo...)."""
+    h, w = rgb.shape[:2]
+    cols = []
+    for y, xa, xb in filas:
+        fila = int(round(-y))
+        a, b = int(np.ceil(xa)), int(np.floor(xb))
+        if 0 <= fila < h and b >= a:
+            cols.append(np.median(rgb[fila, max(0, a):min(w, b + 1)], axis=0))
+        else:
+            cols.append(cols[-1] if cols else np.zeros(3))
+    cols = np.array(cols)
+    frac = (filas[:, 0] - y0) / alto
+    tramos = [[0, 1]]
+    for i in range(1, len(cols)):
+        ref = np.median(cols[tramos[-1][0]:i], axis=0)
+        if np.abs(cols[i] - ref).max() > salto:
+            tramos.append([i, i + 1])
+        else:
+            tramos[-1][1] = i + 1
+    while len(tramos) > 1:
+        largos = [frac[min(b, len(frac) - 1)] - frac[a] for a, b in tramos]
+        i = int(np.argmin(largos))
+        if largos[i] >= minimo:
+            break
+        med = np.median(cols[tramos[i][0]:tramos[i][1]], axis=0)
+        vec = [j for j in (i - 1, i + 1) if 0 <= j < len(tramos)]
+        j = min(vec, key=lambda j: np.abs(np.median(cols[tramos[j][0]:tramos[j][1]], axis=0) - med).max())
+        a, b = min(tramos[i][0], tramos[j][0]), max(tramos[i][1], tramos[j][1])
+        tramos[min(i, j)] = [a, b]
+        del tramos[max(i, j)]
+    # franjas vecinas del mismo color (las separaba una más chica que ya se unió) van juntas
+    i = 0
+    while i < len(tramos) - 1:
+        ca = np.median(cols[tramos[i][0]:tramos[i][1]], axis=0)
+        cb = np.median(cols[tramos[i + 1][0]:tramos[i + 1][1]], axis=0)
+        if np.abs(ca - cb).max() <= salto / 2:
+            tramos[i] = [tramos[i][0], tramos[i + 1][1]]
+            del tramos[i + 1]
+        else:
+            i += 1
+    out = []
+    for a, b in tramos:
+        c = np.median(cols[a:b], axis=0)
+        r = perfil[a:b, 0]
+        out.append({'from': round(float(frac[a]), 4), 'to': round(float(frac[min(b, len(frac) - 1)]), 4),
+                    'color': '#%02x%02x%02x' % tuple(int(round(255 * x)) for x in np.clip(c, 0, 1)),
+                    'maxRadius': round(float(r.max()), 4)})
+    out[0]['from'], out[-1]['to'] = 0.0, 1.0
+    for x, y in zip(out, out[1:]):
+        x['to'] = y['from']
+    return out
 
 
 def _desvio(medido, poli):

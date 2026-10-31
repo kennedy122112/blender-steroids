@@ -668,7 +668,9 @@ def cmd_contour(a):
         fail('No existe la imagen %s' % img)
     args = {'image': img, 'tolerance': a.tolerance, 'method': a.method, 'side': a.side,
             'threshold': a.threshold, 'height': a.height, 'width': a.width, 'lathe': a.lathe,
-            'coefficients': a.coefficients, 'preview': os.path.abspath(a.preview) if a.preview else None}
+            'coefficients': a.coefficients, 'preview': os.path.abspath(a.preview) if a.preview else None,
+            'color': a.color, 'colorTolerance': a.color_tolerance,
+            'range': [float(x) for x in a.range.strip('[]').split(',')] if a.range else None}
     args = {k: v for k, v in args.items() if v not in (None, False)}
     # no toca ninguna escena: siempre en un Blender sin interfaz, sin bloquear el abierto
     return headless('contour', args)
@@ -922,6 +924,9 @@ def main(argv):
     sp.add_argument('--height', type=float)
     sp.add_argument('--width', type=float)
     sp.add_argument('--coefficients', action='store_true')
+    sp.add_argument('--color', help='#rrggbb: el sujeto es lo de ese color (no lo que se separa del fondo)')
+    sp.add_argument('--color-tolerance', '--colortolerance', dest='color_tolerance', type=float)
+    sp.add_argument('--range', help='lathe: desde,hasta en fracción del alto (0 = abajo)')
     sp.add_argument('--preview')
     sp = p('check')
     sp.add_argument('--objects')

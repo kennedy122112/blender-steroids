@@ -162,7 +162,31 @@ for paso, salida, tipo in (('malla', None, 'MESH'), ('curva', 'curve', 'CURVE'),
             and v.get('source') and v.get('anim') and v.get('nombres') == ['Hijo', 'Pieza'] and 'SOLIDIFY' in v.get('mods', []))
     check('reemplazo: %s conserva hijo, material, modificador, animación y fuente' % paso, bien, v)
 
-# 6. una entrada inválida no estropea el archivo
+# 6. farol: franjas de color, estrella por color pegada al cuerpo aunque cuelgue de la bisagra,
+#    péndulo, borla con follow y luz con dos ruidos sumados
+r = cli('build', '--file', ruta('farol.blend'), '--spec', os.path.join(REPO, 'examples', 'farol.json'))
+check('build farol sin avisos', r.get('ok') and not r.get('warnings'), r.get('error') or r.get('warnings'))
+o = r.get('outlines') or {}
+check('farol: cada franja cumple la tolerancia', all(o.get(n, {}).get('targetMet') for n in
+                                                      ('Borla', 'TapaInf', 'AroInf', 'Cuerpo', 'TapaSup', 'Alambre')), o)
+est = (o.get('Estrella') or {}).get('loops') or [{}]
+check('farol: estrella de 10 vértices', len(est) == 1 and est[0].get('vertices') == 10, est)
+mot = {m['object']: m for m in r.get('motions', [])}
+check('farol: la luz suma dos ruidos', (mot.get('Luz') or {}).get('kind') == 'noise+noise', mot.get('Luz'))
+r = cli('exec', '--file', ruta('farol.blend'), '--script', script('estrella.py', '''
+s = bpy.context.scene
+s.frame_set(1)
+b = bpy.data.objects['Bisagra']
+b.animation_data_clear(); b.rotation_euler = (0, 0, 0)
+bpy.context.view_layer.update()
+e = bpy.data.objects['Estrella'].matrix_world.translation
+result = {'estrella': [round(e.x, 4), round(e.y, 4), round(e.z, 4)]}
+'''))
+e = (r.get('result') or {}).get('estrella') or [9, 9, 9]
+check('farol: estrella al frente del cuerpo (attach con padre)', abs(e[0]) < 0.01 and -0.26 < e[1] < -0.2
+      and abs(e[2] - 1.042) < 0.01, e)
+
+# 7. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],

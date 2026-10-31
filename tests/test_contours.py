@@ -146,6 +146,87 @@ class Topologia(unittest.TestCase):
         self.assertIn('elapsedMs', info)
 
 
+
+def pintar(capas, n=512, fondo=(0.9, 0.88, 0.83)):
+    """Imagen RGBA con antialias: capas [(lazos en -0.5..0.5, color rgb)] pintadas en orden."""
+    ss = 4
+    img = np.ones((n, n, 3)) * fondo
+    for lazos, color in capas:
+        m = C.rasterize([np.asarray(l, float) for l in lazos], (n * ss, n * ss),
+                        (-0.5 + 0.5 / (n * ss), 0.5 - 0.5 / (n * ss)), 1.0 / (n * ss))
+        a = m.reshape(n, ss, n, ss).mean(axis=(1, 3))[..., None]
+        img = img * (1 - a) + np.array(color) * a
+    return np.dstack([img, np.ones((n, n))])
+
+
+def estrella(r_ext, r_int, cx=0.0, cy=0.0):
+    ang = np.pi / 2 + np.arange(10) * np.pi / 5
+    rad = np.where(np.arange(10) % 2 == 0, r_ext, r_int)
+    return np.column_stack([cx + rad * np.cos(ang), cy + rad * np.sin(ang)])
+
+
+def rect(x0, y0, x1, y1):
+    return np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], float)
+
+
+class PorColor(unittest.TestCase):
+    """Prueba del farol: la estrella amarilla sobre papel rojo, con tapas doradas cerca."""
+
+    def setUp(self):
+        self.img = pintar([([circulo(0.35)], (0.8, 0.2, 0.17)),
+                           ([rect(-0.15, 0.36, 0.15, 0.44)], (0.79, 0.6, 0.18)),
+                           ([estrella(0.16, 0.07)], (0.97, 0.8, 0.24))])
+
+    def test_solo_la_estrella(self):
+        s, info = C.outline(self.img, size=0.32, color='#f7cc3d', tolerance=0.5)
+        self.assertEqual(info['regions'], 1)
+        self.assertEqual(info['loops'][0]['method'], 'polygon')
+        self.assertEqual(info['loops'][0]['vertices'], 10)
+
+    def test_dorado_no_cuenta_como_amarillo(self):
+        f = C.color_coverage(self.img, '#f7cc3d')
+        n = f.shape[0]
+        fila = int((0.5 - 0.40) * n)                         # a la altura de la tapa dorada
+        self.assertLess(f[fila].max(), 0.5)
+
+    def test_color_invalido(self):
+        with self.assertRaises(ValueError):
+            C.outline(self.img, color='amarillo')
+
+
+class Franjas(unittest.TestCase):
+    """Torno con franjas de color: tapa dorada, cuerpo rojo, tapa dorada."""
+
+    def setUp(self):
+        self.img = pintar([([rect(-0.12, -0.42, 0.12, -0.32)], (0.79, 0.6, 0.18)),
+                           ([rect(-0.25, -0.32, 0.25, 0.30)], (0.8, 0.2, 0.17)),
+                           ([rect(-0.10, 0.30, 0.10, 0.40)], (0.79, 0.6, 0.18))])
+
+    def test_tres_franjas(self):
+        _, info = C.lathe_profile(self.img, size=0.82)
+        b = info['bands']
+        self.assertEqual(len(b), 3)
+        self.assertEqual([x['color'][:3] for x in b], ['#c9', '#cc', '#c9'])
+        self.assertAlmostEqual(b[1]['from'], 0.10 / 0.82, delta=0.01)
+        self.assertAlmostEqual(b[1]['to'], 0.72 / 0.82, delta=0.01)
+        self.assertAlmostEqual(b[1]['maxRadius'], 0.25, delta=0.005)
+
+    def test_range_mide_solo_su_franja(self):
+        b = C.lathe_profile(self.img, size=0.82)[1]['bands']
+        perfil, info = C.lathe_profile(self.img, size=0.82, z_range=[b[1]['from'], b[1]['to']])
+        self.assertTrue(info['targetMet'])
+        self.assertAlmostEqual(perfil[0, 1], b[1]['from'] * 0.82, places=6)
+        self.assertAlmostEqual(perfil[-1, 1], b[1]['to'] * 0.82, places=6)
+        self.assertLess(np.abs(perfil[1:-1, 0] - 0.25).max(), 0.004)
+        with self.assertRaises(ValueError):
+            C.lathe_profile(self.img, z_range=[0.6, 0.2])
+
+    def test_base_plana_no_es_asimetria(self):
+        # la primera altura rozaba solo una esquina de la base: daba una asimetría falsa enorme
+        _, info = C.lathe_profile(self.img, size=0.82)
+        self.assertLess(info['asymmetryPercent'], 0.5)
+
+
 class Bezier(unittest.TestCase):
     def evaluar(self, pts, izq, der, n=64):
         u = np.linspace(0, 1, n)[:, None]
