@@ -643,6 +643,68 @@ def _geom_data(o, name):
     return build_mesh(o, name)
 
 
+def _copy_props(src, dst):
+    """Copia las propiedades editables de un modificador o restricción a otro del mismo tipo."""
+    for p in src.bl_rna.properties:
+        if p.is_readonly or p.identifier in ('rna_type', 'name', 'type'):
+            continue
+        try:
+            setattr(dst, p.identifier, getattr(src, p.identifier))
+        except Exception:
+            pass
+
+
+def _replace_object(o, spec, name, warnings):
+    """Un objeto de Blender no cambia de tipo: para pasar un outline de malla a curva (o al revés) se
+    crea uno nuevo con la geometría nueva y se le pasa todo lo del viejo (colecciones, padre e hijos,
+    transformación, materiales, modificadores y restricciones que admita, animación y propiedades).
+    Si algo falla antes de borrar el viejo, el nuevo se descarta y la escena queda como estaba."""
+    data = _geom_data(spec, name)
+    nuevo = bpy.data.objects.new(name + '.bs_nuevo', data)
+    try:
+        for c in o.users_collection:
+            c.objects.link(nuevo)
+        nuevo.parent = o.parent
+        nuevo.matrix_parent_inverse = o.matrix_parent_inverse.copy()
+        nuevo.location, nuevo.rotation_mode = o.location.copy(), o.rotation_mode
+        nuevo.rotation_euler, nuevo.scale = o.rotation_euler.copy(), o.scale.copy()
+        if o.type == 'CURVE' and nuevo.type == 'MESH' and 'rotation' not in spec                 and str(spec.get('plane', 'XZ')).upper() == 'XZ':
+            nuevo.rotation_euler.x -= math.pi / 2       # la curva estaba girada para quedar de pie; la malla ya lo está
+        for m in o.data.materials:
+            data.materials.append(m)
+        for m in o.modifiers:
+            try:
+                _copy_props(m, nuevo.modifiers.new(m.name, m.type))
+            except (TypeError, RuntimeError):
+                warnings.append('«%s»: el modificador %s (%s) no existe para %s y no se pasó'
+                                % (name, m.name, m.type, nuevo.type))
+        for c in o.constraints:
+            _copy_props(c, nuevo.constraints.new(c.type))
+        if o.animation_data and o.animation_data.action:
+            ad = nuevo.animation_data_create()
+            ad.action = o.animation_data.action
+            if hasattr(ad, 'action_slot') and getattr(o.animation_data, 'action_slot', None):
+                ad.action_slot = o.animation_data.action_slot
+        for k in o.keys():
+            if k != 'bs_geom':
+                nuevo[k] = o[k]
+        for hijo in list(o.children):
+            mw = hijo.matrix_world.copy()
+            hijo.parent = nuevo
+            hijo.matrix_world = mw
+    except Exception:
+        bpy.data.objects.remove(nuevo, do_unlink=True)
+        if data.users == 0:
+            (bpy.data.meshes if isinstance(data, bpy.types.Mesh) else bpy.data.curves).remove(data)
+        raise
+    viejo = o.data
+    bpy.data.objects.remove(o, do_unlink=True)
+    if viejo is not None and viejo.users == 0:
+        (bpy.data.meshes if isinstance(viejo, bpy.types.Mesh) else bpy.data.curves).remove(viejo)
+    nuevo.name = name
+    return nuevo
+
+
 def _geom_kind(t, o):
     return 'CURVE' if t == 'outline' and o.get('output') == 'curve' else 'MESH'
 
@@ -1412,7 +1474,7 @@ DEFAULT_OBJECTS = {'Cube': 'MESH', 'Light': 'LIGHT', 'Camera': 'CAMERA'}
 
 def op_build(spec):
     """Crea o actualiza (por nombre) materiales, colecciones, objetos, luces, cámaras y animación."""
-    warnings, created, updated, removed = [], [], [], []
+    warnings, created, updated, removed, replaced = [], [], [], [], []
     base_dir = spec.get('_baseDir')
     _BUILD['baseDir'] = base_dir
     _BUILD['outlines'] = {}
@@ -1454,7 +1516,11 @@ def op_build(spec):
             # así se le pueden cambiar material, posición o modificadores sin rehacerlo.
             if t:
                 want = _geom_kind(t, os_) if t in PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
-                if o.type != want:
+                if o.type != want and t == 'outline' and {o.type, want} == {'MESH', 'CURVE'}:
+                    o = _replace_object(o, os_, name, warnings)
+                    o['bs_geom'] = _geom_sig(os_)
+                    replaced.append(name)
+                elif o.type != want:
                     warnings.append('«%s» ya existe y es %s, no %s: se omite' % (name, o.type, want))
                     continue
             if t in PRIMITIVES and any(k in os_ for k in GEOM_KEYS if k != 'type') \
@@ -1568,6 +1634,8 @@ def op_build(spec):
                                 % (n, inf['asymmetryPercent']))
     if removed:
         res['removed'] = removed
+    if replaced:
+        res['replaced'] = replaced
     if warnings:
         res['warnings'] = warnings
     res['camera'] = _scene().camera.name if _scene().camera else None

@@ -163,10 +163,31 @@ def reconstruct(c, order):
     return np.column_stack([z.real, z.imag])
 
 
-def self_intersects(p):
-    """¿Se cruza el lazo consigo mismo? Pares de lados no vecinos, O(n²) (n de unos cientos)."""
+def dedupe(p, eps=0.0):
+    """Quita puntos consecutivos repetidos (también el último si repite al primero)."""
+    p = np.asarray(p, np.float64)
+    if len(p) < 2:
+        return p
+    d = np.linalg.norm(np.diff(np.vstack([p, p[:1]]), axis=0), axis=1)
+    return p[d > eps]
+
+
+def _dist_punto_tramo(P, A, B):
+    """Distancia de cada punto P a cada tramo AB (con broadcasting)."""
+    ab = B - A
+    t = np.clip(((P - A) * ab).sum(-1) / np.maximum((ab * ab).sum(-1), 1e-300), 0, 1)
+    return np.linalg.norm(P - (A + t[..., None] * ab), axis=-1)
+
+
+def self_intersects(p, rel_tol=1e-9):
+    """¿Se cruza o se toca el lazo consigo mismo? Pares de lados no vecinos, O(n²) (n de unos cientos):
+    cruces estrictos y además contactos (un vértice apoyado en otro lado, tramos colineales que se
+    superponen, un punto repetido), medidos como distancia entre tramos <= rel_tol × diagonal."""
+    p = dedupe(p)
     a, b = p, np.roll(p, -1, axis=0)
     n = len(p)
+    if n < 4:
+        return False
 
     def lado(o, u, v):
         return np.sign((u[..., 0] - o[..., 0]) * (v[..., 1] - o[..., 1])
@@ -175,7 +196,13 @@ def self_intersects(p):
     cruza = (lado(A, B, C) * lado(A, B, D) < 0) & (lado(C, D, A) * lado(C, D, B) < 0)
     i, j = np.indices((n, n))
     vecino = (np.abs(i - j) <= 1) | (np.abs(i - j) == n - 1)
-    return bool(np.any(cruza & ~vecino))
+    if np.any(cruza & ~vecino):
+        return True
+    # sin cruce estricto, la distancia entre dos tramos es la menor de sus extremos al otro tramo
+    eps = rel_tol * float(np.linalg.norm(np.ptp(p, axis=0)))
+    d = np.minimum.reduce([_dist_punto_tramo(A, C, D), _dist_punto_tramo(B, C, D),
+                           _dist_punto_tramo(C, A, B), _dist_punto_tramo(D, A, B)])
+    return bool(np.any((d <= eps) & ~vecino))
 
 
 def rdp_indices(p, tol):
@@ -316,6 +343,8 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
 
     Devuelve (regiones, info): regiones con lazos en metros (y hacia arriba, centrados en el origen;
     exterior antihorario, huecos horario) e info con las medidas por lazo."""
+    import time
+    inicio = time.perf_counter()
     if isinstance(loops_or_image, np.ndarray):
         f = coverage(loops_or_image, threshold)
         h, w = f.shape
@@ -324,8 +353,8 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
             raise ValueError('No se encontró ninguna figura en la imagen (prueba con threshold)')
         regs = [{'outer': r['outer'] * [1, -1], 'holes': [hh * [1, -1] for hh in r['holes']]} for r in regs]
     else:
-        regs = [{'outer': np.asarray(r['outer'], np.float64),
-                 'holes': [np.asarray(hh, np.float64) for hh in r.get('holes', [])]} for r in loops_or_image]
+        regs = [{'outer': dedupe(r['outer']), 'holes': [dedupe(hh) for hh in r.get('holes', [])]}
+                for r in loops_or_image]
         for r in regs:
             for l in [r['outer']] + r['holes']:
                 if l.ndim != 2 or l.shape[1] != 2 or len(l) < 3:
@@ -367,7 +396,8 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
             'regions': len(salida), 'holes': sum(len(r['holes']) for r in salida),
             'size': [round(float(caja[0] * k), 4), round(float(caja[1] * k), 4)],
             'diagonal': round(diag, 4), 'tolerancePercent': float(tolerance), 'tolerance': tol,
-            'targetMet': all(l['targetMet'] for l in lazos), 'loops': lazos}
+            'targetMet': all(l['targetMet'] for l in lazos), 'loops': lazos,
+            'elapsedMs': round(1000 * (time.perf_counter() - inicio), 1)}
     return salida, info
 
 

@@ -102,5 +102,52 @@ class Modelos(unittest.TestCase):
             D.simulate({'kind': 'oscillate', 'frequency': 1, 'amplitude': 1}, [0.0] * (D.MAX_FRAMES + 1))
 
 
+
+class Robustez(unittest.TestCase):
+    """Hallazgos de la auditoría BS-REVIEW-005 (R5, R6)."""
+
+    def test_tiempos_invalidos(self):
+        m = {'kind': 'spring', 'frequency': 1, 'initial': 1}
+        for malos in ([0, 0.1, 0.05], [0, 0.1, 0.1], [0, float('nan'), 0.2], [0, float('inf')], []):
+            with self.assertRaises(ValueError):
+                D.simulate(m, malos)
+
+    def test_resorte_rigido_estable(self):
+        # 300 Hz con el paso por defecto (1/480 s) es inestable para RK4: el paso se ajusta solo
+        m = {'kind': 'spring', 'frequency': 300, 'dampingRatio': 0.05, 'initial': 1}
+        t = tiempos(0.5, 24)
+        v, info = D.simulate(m, t)
+        self.assertLess(max(abs(x) for x in v), 1.0 + 1e-9)
+        self.assertLess(max(abs(a - D.spring_exact(m, ti)) for a, ti in zip(v, t)), 1e-6)
+        self.assertGreater(info['substeps'], 0)
+
+    def test_tope_de_subpasos(self):
+        with self.assertRaises(ValueError):
+            D.simulate({'kind': 'spring', 'frequency': 1, 'initial': 1, 'step': 1e-7}, tiempos(60, 24))
+
+    def test_follow_igual_y_lineal(self):
+        import time
+        t = tiempos(100, 24)                                     # 2401 fotogramas
+        a = [math.sin(3 * x) + 0.3 * math.sin(11 * x) for x in t]
+        m = {'kind': 'follow', 'frequency': 3, 'dampingRatio': 0.3, 'gain': 2}
+        t0 = time.perf_counter()
+        v, info = D.simulate(m, t, a)
+        dt = time.perf_counter() - t0
+        self.assertLess(dt, 2.0)                                 # antes: 8 s (búsqueda lineal)
+        # referencia: la misma ecuación con la aceleración interpolada por búsqueda lineal
+        w, z = 2 * math.pi * 3, 0.3
+
+        def acel(tt):
+            for i in range(1, len(t)):
+                if tt <= t[i]:
+                    u = (tt - t[i - 1]) / (t[i] - t[i - 1])
+                    return a[i - 1] * (1 - u) + a[i] * u
+            return a[-1]
+        ref = D.integrate(lambda tt, y: [y[1], -w * w * 2 * acel(tt) - 2 * z * w * y[1] - w * w * y[0]],
+                          [0.0, 0.0], t[:241], info['step'])
+        self.assertLess(max(abs(x - r[0]) for x, r in zip(v[:241], ref)), 1e-9)
+        self.assertIn('elapsedMs', info)
+
+
 if __name__ == '__main__':
     unittest.main()
