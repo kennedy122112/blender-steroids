@@ -116,6 +116,36 @@ class Lazos(unittest.TestCase):
 
 
 
+
+class Topologia(unittest.TestCase):
+    """Hallazgo R1 de la auditoría: contactos que no son cruces estrictos."""
+
+    def test_toque_tangencial(self):
+        toca = np.array([[0, 0], [2, 0], [2, 1], [1, 0], [0, 1]], float)        # un vértice apoyado en un lado
+        self.assertTrue(C.self_intersects(toca))
+
+    def test_colineal_superpuesto(self):
+        col = np.array([[0, 0], [3, 0], [3, 1], [2, 0], [1, 0], [0, 1]], float)
+        self.assertTrue(C.self_intersects(col))
+
+    def test_punto_repetido_no_vecino(self):
+        ocho = np.array([[0, 0], [1, 1], [2, 0], [1, -1], [0, 0.0001], [0, 0], [-1, 1], [-1, -1]], float)
+        self.assertTrue(C.self_intersects(ocho))
+
+    def test_sin_falsos_positivos(self):
+        self.assertFalse(C.self_intersects(circulo(1, n=256)))
+        self.assertFalse(C.self_intersects(np.array([[0, 0], [1, 0], [1, 1], [0, 1]], float)))
+        # una muesca angosta pero abierta no es un cruce
+        muesca = np.array([[0, 0], [1, 0], [1, 1], [0.501, 1], [0.501, 0.2], [0.499, 0.2], [0.499, 1], [0, 1]], float)
+        self.assertFalse(C.self_intersects(muesca))
+
+    def test_duplicados_consecutivos(self):
+        cuad = [[0, 0], [1, 0], [1, 0], [1, 1], [1, 1], [0, 1], [0, 0]]
+        salida, info = C.outline([{'outer': cuad}], method='polygon')
+        self.assertEqual(info['loops'][0]['vertices'], 4)
+        self.assertIn('elapsedMs', info)
+
+
 class Bezier(unittest.TestCase):
     def evaluar(self, pts, izq, der, n=64):
         u = np.linspace(0, 1, n)[:, None]

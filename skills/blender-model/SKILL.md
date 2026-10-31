@@ -155,8 +155,9 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
   rellena y con grosor (`thickness`), que se edita moviendo puntos de control: los contornos suaves son
   Bézier con pocos puntos (un círculo, 4; la llama del ejemplo, 52 para 89 coeficientes) y los
   angulosos, polilíneas. Calza igual que la malla (IoU 0.988 las dos). Con `plane` XZ el objeto queda
-  girado 90° en X para estar de pie; si das `rotation`, súmale ese giro. Para cambiar de malla a curva
-  en un objeto que ya existe, bórralo antes (`delete`).
+  girado 90° en X para estar de pie; si das `rotation`, súmale ese giro. Cambiar `output` en un objeto
+  que ya existe lo reemplaza (malla ↔ curva) conservando nombre, colección, padre e hijos, materiales,
+  modificadores que admita el tipo nuevo, animación y propiedades; el resultado lo lista en `replaced`.
 - **Trazabilidad**: cada objeto hecho con `outline` o `lathe` + `image` guarda en la propiedad
   `bs_source` con qué se hizo (parámetros, ruta y sha1 de la imagen, versión) y qué salió (método,
   error y coeficientes de Fourier de cada contorno; el perfil del torno). Léela con `scene -Object`
@@ -320,6 +321,9 @@ primera vez; repetir `build` no lo corre ni duplica claves). Los otros ejes y an
 - `follow` con `walk`: después de `walk`, crea la bisagra de la antena con `parent: "bs_walk_cabeza"`,
   cuelga la antena de ella y usa `leader: "bs_walk_cabeza"`, `leaderAxis: "z"` (el rebote del paso).
 - Se exporta: el GLB lleva un canal de animación por cada motion (verificado).
+- El paso de integración se achica solo si el sistema oscila rápido (estable aunque sea muy rígido) y
+  hay un tope de cálculo: si una simulación lo pasa, build lo dice en vez de quedarse colgado.
+  `motions` trae `elapsedMs`, `step` y `substeps`.
 
 ### Actualizar lo que existe
 Un objeto que ya existe se busca por `name` y solo cambia lo que pongas: `{ "name": "Tablero", "material": "Rojo" }`

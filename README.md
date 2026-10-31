@@ -1,7 +1,8 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.14.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.14.1-0a7bbb?style=for-the-badge">
+  <a href="https://github.com/kennedy122112/blender-steroids/actions/workflows/tests.yml"><img alt="Pruebas" src="https://img.shields.io/github/actions/workflow/status/kennedy122112/blender-steroids/tests.yml?branch=main&label=pruebas&style=for-the-badge"></a>
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -216,6 +217,8 @@ El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-mo
 | Ruta | Contenido |
 |---|---|
 | `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos; solo NumPy), `dynamics.py` (oscilar, resorte, péndulo y seguir, con RK4; sin dependencias) |
+| `tests/integration/smoke.py` | Prueba con Blender de verdad: ejemplos, curvas horneadas, GLB reabierto, período del péndulo, idempotencia, objetos ajenos, reemplazo malla/curva y archivo intacto ante un error |
+| `.github/workflows/tests.yml` | CI: pruebas unitarias (Python 3.10 y 3.12) y Blender 4.2 sin interfaz con la prueba de integración, en cada PR |
 | `tests/` | Pruebas de contornos y de movimiento: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
 | `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |

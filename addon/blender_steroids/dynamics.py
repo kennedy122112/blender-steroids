@@ -11,10 +11,14 @@ Las ODE se integran con RK4 de paso fijo (subpasos dentro de cada fotograma). Ca
 es 'kinematic' o 'ode_simulated', con métricas y avisos (aliasing cuando los fps no alcanzan para la
 frecuencia). Unidades: s, m, kg; los ángulos en grados, como en el resto del spec.
 """
+import bisect
 import math
+import time
 
 KINDS = ('oscillate', 'spring', 'pendulum', 'follow')
 MAX_FRAMES = 20000
+MAX_SUBSTEPS = 2000000          # tope de pasos RK4 por movimiento (unos segundos de cálculo)
+PASOS_POR_CICLO = 40            # el paso se achica solo para dar al menos esto por ciclo natural
 
 
 def rk4(f, y, t, dt):
@@ -87,12 +91,27 @@ def natural_frequency(m):
 def simulate(m, times, leader_accel=None):
     """Valores del movimiento `m` en cada instante de `times` (s, desde 0). Para follow, leader_accel
     es la aceleración del objeto guía en esos mismos instantes (m/s²). Devuelve (valores, info)."""
+    inicio = time.perf_counter()
     kind = m.get('kind')
     if kind not in KINDS:
         raise ValueError('motion kind debe ser uno de: %s' % ', '.join(KINDS))
+    if not times:
+        raise ValueError('No hay instantes que calcular')
     if len(times) > MAX_FRAMES:
         raise ValueError('Demasiados fotogramas (%d, máximo %d)' % (len(times), MAX_FRAMES))
+    if not all(math.isfinite(t) for t in times):
+        raise ValueError('Los instantes deben ser números finitos')
+    if any(b <= a for a, b in zip(times, times[1:])):
+        raise ValueError('Los instantes deben ser estrictamente crecientes')
+    # paso de integración: el pedido (o 1/480 s), achicado si el sistema oscila rápido: RK4 se vuelve
+    # inestable con paso·ω > 2.8 y pierde precisión mucho antes
     paso = _num(m, 'step', 1 / 480, positive=True)
+    if kind != 'oscillate':
+        paso = min(paso, 1 / (PASOS_POR_CICLO * natural_frequency(m)))
+        subpasos = int(math.ceil((times[-1] - times[0]) / paso))
+        if subpasos > MAX_SUBSTEPS:
+            raise ValueError('La simulación necesita %d pasos (máximo %d): acorta la duración, sube step o '
+                             'baja la frecuencia' % (subpasos, MAX_SUBSTEPS))
     if kind == 'oscillate':
         f = _num(m, 'frequency', positive=True)
         A = _num(m, 'amplitude')
@@ -123,14 +142,14 @@ def simulate(m, times, leader_accel=None):
         gain = _num(m, 'gain', 1.0)
 
         def acel(t):
-            # aceleración del guía interpolada entre fotogramas
+            # aceleración del guía interpolada entre fotogramas (búsqueda binaria del tramo)
             if t <= times[0]:
                 return leader_accel[0]
-            for i in range(1, len(times)):
-                if t <= times[i]:
-                    u = (t - times[i - 1]) / (times[i] - times[i - 1])
-                    return leader_accel[i - 1] * (1 - u) + leader_accel[i] * u
-            return leader_accel[-1]
+            i = bisect.bisect_left(times, t)
+            if i >= len(times):
+                return leader_accel[-1]
+            u = (t - times[i - 1]) / (times[i] - times[i - 1])
+            return leader_accel[i - 1] * (1 - u) + leader_accel[i] * u
         ys = integrate(lambda t, y: [y[1], -w * w * gain * acel(t) - 2 * z * w * y[1] - w * w * y[0]],
                        [0.0, 0.0], times, paso)
         vals = [y[0] for y in ys]
@@ -140,7 +159,11 @@ def simulate(m, times, leader_accel=None):
         raise ValueError('La simulación dio %d valores no finitos: revisa los parámetros' % malos)
     lim = m.get('maxAbs')
     info = {'kind': kind, 'mode': modo, 'frames': len(vals),
-            'maxAbs': round(max(abs(v) for v in vals), 6) if vals else 0.0, 'warnings': []}
+            'maxAbs': round(max(abs(v) for v in vals), 6) if vals else 0.0, 'warnings': [],
+            'elapsedMs': round(1000 * (time.perf_counter() - inicio), 1)}
+    if modo == 'ode_simulated':
+        info['step'] = paso
+        info['substeps'] = int(math.ceil((times[-1] - times[0]) / paso))
     if lim is not None and info['maxAbs'] > float(lim):
         raise ValueError('El movimiento llega a %.4g y el límite (maxAbs) es %s' % (info['maxAbs'], lim))
     return vals, info
