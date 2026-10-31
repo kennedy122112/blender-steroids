@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.12.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.13.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,7 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
-- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros. Y de la foto de lado de un jarrón, una botella o un farol saca su perfil y lo gira.
+- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros. Y de la foto de lado de un jarrón, una botella o un farol saca su perfil y lo gira. Puede entregarlas como curvas editables (Bézier) y cada pieza guarda con qué se hizo.
 - 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
@@ -151,7 +151,7 @@ Está pensado para modelado por piezas (hard-surface, mobiliario, producto, maqu
 
 ## ⚠️ Limitaciones
 
-- Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD). macOS y Linux: soportados, sin probar todavía en un equipo real.
+- Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD) y con Blender 4.2 LTS (pruebas, ejemplos, render, retro, Cycles, check, export, compare, walk, curvas, contour e import). Un `.blend` guardado en 5.x no abre en 4.2. Linux: lanzador, `status` y `doctor` probados en Ubuntu (WSL) sin Blender. macOS: soportado, sin probar en un equipo real.
 - El modelado declarativo cubre primitivas, mallas por vértices, texto, modificadores, materiales Principled, luces, cámaras y animación por fotogramas clave. Nodos de geometría, rigs, partículas y físicas van por código `bpy` (`exec`).
 - `outline` convierte siluetas en piezas planas o de grosor uniforme: una sola imagen no da profundidad, así que los volúmenes se siguen modelando con primitivas.
 - Si el spec cambia la forma de un objeto, su malla se rehace y se pierden ediciones hechas a mano en ella.
@@ -199,6 +199,7 @@ Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-c
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
 | `compare -Reference ref.png -Path c.png [-FitView] [-Holes keep]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara; `-Holes keep` respeta los agujeros reales |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
+| `contour -Image s.png [-Lathe] [-Preview v.png]` | Analiza una silueta sin construir: regiones, huecos, método (Fourier o polígono) y error de cada contorno, o el perfil de torno; dibuja lo que entendió |
 | `walk -Spec caminata.json` | Ciclo de caminata sin huesos: pies planos y rebote medido en cada fotograma |
 | `render -Path x.png -Retro` | Look de consola de 32 bits: baja resolución, 15 bits con tramado, píxeles duros |
 | `import -Path m.glb [-Height 0.85]` | Trae un modelo como base: agrupado, escalado y apoyado en el suelo |

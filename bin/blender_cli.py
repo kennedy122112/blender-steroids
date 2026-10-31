@@ -19,6 +19,8 @@ Uso (toda salida es JSON por stdout):
          [--samples N] [--resolution 1920x1080] [--percentage 50] [--camera nombre] [--frame N]
          [--animation [--frames 1-120]] [--transparent]
   export --path modelo.glb|fbx|obj|stl|ply|usd [--objects a,b]
+  contour --image silueta.png [--lathe [--side left]] [--preview vista.png]
+                                            analiza una silueta sin construir: método, orden, error
   compare --reference ref.png --path comparar.png [--view front|...] [--objects a,b] [--preview]
           [--fit-view] [--no-align] [--no-overlay] [--no-guides] [--holes fill|keep]
                                             referencia | render alineado a su figura | siluetas
@@ -660,6 +662,18 @@ def cmd_walk(a):
     return run('walk', spec, a)
 
 
+def cmd_contour(a):
+    img = os.path.abspath(a.image)
+    if not os.path.exists(img):
+        fail('No existe la imagen %s' % img)
+    args = {'image': img, 'tolerance': a.tolerance, 'method': a.method, 'side': a.side,
+            'threshold': a.threshold, 'height': a.height, 'width': a.width, 'lathe': a.lathe,
+            'coefficients': a.coefficients, 'preview': os.path.abspath(a.preview) if a.preview else None}
+    args = {k: v for k, v in args.items() if v not in (None, False)}
+    # no toca ninguna escena: siempre en un Blender sin interfaz, sin bloquear el abierto
+    return headless('contour', args)
+
+
 def cmd_check(a):
     args = {'tolerance': a.tolerance}
     if a.objects:
@@ -898,6 +912,17 @@ def main(argv):
     sp = p('walk')
     sp.add_argument('--spec', required=True)
     sp.add_argument('--save')
+    sp = p('contour')
+    sp.add_argument('--image', required=True)
+    sp.add_argument('--lathe', action='store_true', help='perfil de torno en vez de contornos')
+    sp.add_argument('--side', choices=['both', 'left', 'right'])
+    sp.add_argument('--tolerance', type=float)
+    sp.add_argument('--method', choices=['auto', 'fourier', 'polygon'])
+    sp.add_argument('--threshold', type=float)
+    sp.add_argument('--height', type=float)
+    sp.add_argument('--width', type=float)
+    sp.add_argument('--coefficients', action='store_true')
+    sp.add_argument('--preview')
     sp = p('check')
     sp.add_argument('--objects')
     sp.add_argument('--tolerance', type=float, default=0.004)
@@ -930,6 +955,8 @@ def main(argv):
         res = run('open', {'path': os.path.abspath(a.path)}, a)
     elif a.cmd == 'render':
         res = cmd_render(a)
+    elif a.cmd == 'contour':
+        res = cmd_contour(a)
     elif a.cmd == 'compare':
         res = cmd_compare(a)
     elif a.cmd == 'check':

@@ -247,14 +247,15 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
-             'plane', 'side', 'profileRings')
+             'plane', 'side', 'profileRings', 'output')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
               'outline'}
 
-# build deja aquí la carpeta del spec (rutas de imágenes de outline) y las medidas de cada outline
-_BUILD = {'baseDir': None, 'outlines': {}}
+# build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
+# lathe con imagen, y su fuente para guardarla en el objeto
+_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}}
 
 
 def _fit(bm, target):
@@ -364,17 +365,14 @@ def _lathe(bm, o, name=None):
     both/left/right si de un lado hay un asa, `threshold`); las medidas van a `outlines` de build."""
     if o.get('image'):
         from . import contours
-        ruta = _path(o['image'], _BUILD['baseDir'])
-        px = _load_pixels(ruta)
-        if px.shape[0] > 1024:
-            px = _load_pixels(ruta, 1024)
+        px, ruta = _image_px(o)
         size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
-        perfil, info = contours.lathe_profile(px[::-1], size=size, axis=axis,
+        perfil, info = contours.lathe_profile(px, size=size, axis=axis,
                                               tolerance=float(o.get('tolerance', 0.25)),
                                               side=o.get('side', 'both'), threshold=o.get('threshold'),
                                               rings=int(o.get('profileRings', 64)))
         info['profile'] = [[round(float(r), 4), round(float(z), 4)] for r, z in perfil]
-        _BUILD['outlines'][name] = info
+        _record(name, o, info, ruta)
         o = dict(o, profile=info['profile'])
     elif not o.get('profile'):
         raise ValueError('lathe necesita profile [[radio, z], ...] o image (la silueta vista de lado)')
@@ -508,21 +506,53 @@ def _membrane(bm, o):
             _tube(bm, {'points': [list(p) for p in pts], 'radii': [r0, r1], 'segments': 12})
 
 
-def _outline(bm, o, name):
-    """Silueta plana o extruida a partir de una imagen (`image`: figura sobre fondo liso, o PNG con
-    transparencia) o de puntos (`points` [[x, y], ...] en metros, con `holes` [[[x, y], ...], ...]).
-    Cada contorno se simplifica con Fourier (curvas suaves) o como polígono (esquinas vivas) según
-    `method` (auto | fourier | polygon), con un error máximo de `tolerance` % de la diagonal (0.25).
-    Tamaño con `width` o `height` en metros (una imagen, si no, mide 1 m de ancho). `thickness` 0.02
-    (0 = solo la cara); `plane` 'XZ' (de pie, de frente a -Y como la vista front) o 'XY' (en el piso).
-    Las medidas quedan en el resultado de build (`outlines`)."""
+def _image_px(o):
+    """Imagen de outline/lathe (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
+    ruta = _path(o['image'], _BUILD['baseDir'])
+    px = _load_pixels(ruta)
+    if px.shape[0] > 1024:
+        px = _load_pixels(ruta, 1024)
+    return px[::-1], ruta
+
+
+def _public(info):
+    """Medidas para el resultado (sin coeficientes ni marcos internos, que empiezan con _)."""
+    def limpio(d):
+        return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in d.items()
+                if not k.startswith('_') and k not in ('hausdorff', 'maxCorrespondenceError')}
+    pub = limpio(info)
+    if 'loops' in info:
+        pub['loops'] = [limpio(l) for l in info['loops']]
+    return pub
+
+
+def _record(name, o, info, ruta=None):
+    """Guarda las medidas para el resultado de build y la fuente completa para el objeto (bs_source):
+    con qué se generó (parámetros, imagen y su sha1, versión) y qué salió (con los coeficientes de
+    Fourier de cada contorno), para poder reproducirlo o explicarlo después."""
+    import hashlib
+    from .version import VERSION
+    pub = _public(info)
+    _BUILD['outlines'][name] = pub
+    res = dict(pub)
+    if 'loops' in info:
+        res['loops'] = [dict(l, **({'coefficients': c['_coef']} if '_coef' in c else {}))
+                        for l, c in zip(pub['loops'], info['loops'])]
+    fuente = {'generator': o.get('type'), 'version': VERSION,
+              'params': {k: o[k] for k in GEOM_KEYS if k in o and k not in ('image', 'profile')},
+              'result': res}
+    if ruta:
+        with open(ruta, 'rb') as f:
+            fuente['image'] = {'path': ruta, 'sha1': hashlib.sha1(f.read()).hexdigest()}
+    _BUILD['sources'][name] = fuente
+
+
+def _outline_loops(o):
+    """Regiones simplificadas de outline (en metros, plano local XY) y sus medidas."""
     from . import contours
+    ruta = None
     if o.get('image'):
-        ruta = _path(o['image'], _BUILD['baseDir'])
-        px = _load_pixels(ruta)
-        if px.shape[0] > 1024:
-            px = _load_pixels(ruta, 1024)
-        fuente = px[::-1]                                   # el núcleo espera filas de arriba abajo
+        fuente, ruta = _image_px(o)
     elif o.get('points'):
         fuente = [{'outer': o['points'], 'holes': o.get('holes', [])}]
     else:
@@ -530,11 +560,20 @@ def _outline(bm, o, name):
     size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
     regs, info = contours.outline(fuente, size=size, axis=axis, tolerance=float(o.get('tolerance', 0.25)),
                                   method=o.get('method', 'auto'), threshold=o.get('threshold'))
-    _BUILD['outlines'][name] = {
-        'regions': info['regions'], 'holes': info['holes'], 'size': info['size'],
-        'tolerancePercent': info['tolerancePercent'], 'targetMet': info['targetMet'],
-        'loops': [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in l.items()
-                   if k not in ('hausdorff', 'maxCorrespondenceError')} for l in info['loops']]}
+    return regs, info, ruta
+
+
+def _outline(bm, o, name):
+    """Silueta plana o extruida a partir de una imagen (`image`: figura sobre fondo liso, o PNG con
+    transparencia) o de puntos (`points` [[x, y], ...] en metros, con `holes` [[[x, y], ...], ...]).
+    Cada contorno se simplifica con Fourier (curvas suaves) o como polígono (esquinas vivas) según
+    `method` (auto | fourier | polygon), con un error máximo de `tolerance` % de la diagonal (0.25).
+    Tamaño con `width` o `height` en metros (una imagen, si no, mide 1 m de ancho). `thickness` 0.02
+    (0 = solo la cara); `plane` 'XZ' (de pie, de frente a -Y como la vista front) o 'XY' (en el piso).
+    `output: "curve"` da una curva de Blender en vez de malla (_outline_curve). Las medidas quedan en
+    el resultado de build (`outlines`) y la fuente en la propiedad bs_source del objeto."""
+    regs, info, ruta = _outline_loops(o)
+    _record(name, o, info, ruta)
     xz = str(o.get('plane', 'XZ')).upper() == 'XZ'
     for r in regs:
         polis = [[Vector((x, 0.0, y) if xz else (x, y, 0.0)) for x, y in lazo]
@@ -558,6 +597,54 @@ def _outline(bm, o, name):
         bmesh.ops.translate(bm, vec=-frente * th, verts=atras)
         bmesh.ops.translate(bm, vec=frente * (th / 2), verts=bm.verts)   # centrada en su grosor
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+
+def _outline_curve(o, name):
+    """outline como curva 2D de Blender (editable por puntos de control, rellena y con grosor): los
+    contornos suaves son Bézier con asas tangentes exactas (pocos puntos), los angulosos son polilíneas.
+    La curva vive en el plano XY local; con plane XZ, build la pone de pie girando el objeto 90° en X."""
+    from . import contours
+    regs, info, ruta = _outline_loops(o)
+    if o.get('origin') == 'bottom':
+        y0 = min(float(r['outer'][:, 1].min()) for r in regs)
+        regs = [{'outer': r['outer'] - [0, y0], 'holes': [hh - [0, y0] for hh in r['holes']]} for r in regs]
+    tol = info['tolerance']
+    cu = bpy.data.curves.new(name, 'CURVE')
+    cu.dimensions = '2D'
+    cu.fill_mode = 'BOTH'
+    cu.resolution_u = int(o.get('resolution', 12))
+    cu.extrude = float(o.get('thickness', 0.02)) / 2
+    lazos = [l for r in regs for l in [r['outer']] + r['holes']]
+    for lazo, l_info in zip(lazos, info['loops']):
+        if l_info['method'] == 'fourier':
+            pts, izq, der, err = contours.bezier(lazo, tol * 0.5)
+            l_info['bezierPoints'] = int(len(pts))
+            sp = cu.splines.new('BEZIER')
+            sp.bezier_points.add(len(pts) - 1)
+            for bp, p_, a, b in zip(sp.bezier_points, pts, izq, der):
+                bp.co = (p_[0], p_[1], 0)
+                bp.handle_left_type = bp.handle_right_type = 'FREE'
+                bp.handle_left = (a[0], a[1], 0)
+                bp.handle_right = (b[0], b[1], 0)
+        else:
+            sp = cu.splines.new('POLY')
+            sp.points.add(len(lazo) - 1)
+            for pt, (x, y) in zip(sp.points, lazo):
+                pt.co = (x, y, 0, 1)
+        sp.use_cyclic_u = True
+    _record(name, o, info, ruta)
+    return cu
+
+
+def _geom_data(o, name):
+    """Geometría de un tipo de PRIMITIVES: malla, o curva para outline con output curve."""
+    if o.get('type', '').lower() == 'outline' and o.get('output') == 'curve':
+        return _outline_curve(o, name)
+    return build_mesh(o, name)
+
+
+def _geom_kind(t, o):
+    return 'CURVE' if t == 'outline' and o.get('output') == 'curve' else 'MESH'
 
 
 def build_mesh(o, name):
@@ -835,7 +922,7 @@ def _move_to(o, coll):
 def _new_object(spec, name):
     t = spec.get('type', 'cube').lower()
     if t in PRIMITIVES:
-        return bpy.data.objects.new(name, build_mesh(spec, name)), 'MESH'
+        return bpy.data.objects.new(name, _geom_data(spec, name)), _geom_kind(t, spec)
     if t == 'empty':
         o = bpy.data.objects.new(name, None)
         o.empty_display_type = spec.get('display', 'PLAIN_AXES').upper()
@@ -1230,6 +1317,7 @@ def op_build(spec):
     base_dir = spec.get('_baseDir')
     _BUILD['baseDir'] = base_dir
     _BUILD['outlines'] = {}
+    _BUILD['sources'] = {}
 
     if spec.get('removeDefaults'):
         for n, t in DEFAULT_OBJECTS.items():
@@ -1265,18 +1353,18 @@ def op_build(spec):
             # Un objeto existente conserva su malla salvo que el spec traiga parámetros de geometría:
             # así se le pueden cambiar material, posición o modificadores sin rehacerlo.
             if t:
-                want = 'MESH' if t in PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
+                want = _geom_kind(t, os_) if t in PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
                 if o.type != want:
                     warnings.append('«%s» ya existe y es %s, no %s: se omite' % (name, o.type, want))
                     continue
             if t in PRIMITIVES and any(k in os_ for k in GEOM_KEYS if k != 'type') \
                     and o.get('bs_geom') != _geom_sig(os_):
                 old = o.data
-                o.data = build_mesh(os_, name)
+                o.data = _geom_data(os_, name)
                 for m in old.materials:
                     o.data.materials.append(m)
                 if old.users == 0:
-                    bpy.data.meshes.remove(old)
+                    (bpy.data.meshes if isinstance(old, bpy.types.Mesh) else bpy.data.curves).remove(old)
                 o['bs_geom'] = _geom_sig(os_)
             updated.append(name)
         else:
@@ -1291,6 +1379,11 @@ def op_build(spec):
             _move_to(o, _collection(os_.get('collection')))
         _apply_data(o, os_, warnings)
         _apply_transform(o, os_)
+        if o.type == 'CURVE' and t == 'outline' and 'rotation' not in os_ \
+                and str(os_.get('plane', 'XZ')).upper() == 'XZ':
+            o.rotation_euler = (math.pi / 2, 0, 0)          # la curva 2D vive en XY: de pie, de frente a -Y
+        if name in _BUILD['sources']:
+            o['bs_source'] = json.dumps(_BUILD['sources'][name], ensure_ascii=False)
         _apply_materials(o, os_, warnings)
         if o.type == 'MESH' and 'smooth' in os_:
             if os_['smooth']:
@@ -2495,11 +2588,11 @@ def op_walk(args):
         s.frame_set(f)
         minimos.append(round(min((p.matrix_world @ v.co).z for p in pies for v in p.data.vertices), 4))
 
-    from bpy_extras.anim_utils import action_get_channelbag_for_slot
     for o in [raiz, rebote, cuerpo, cabeza] + [x[0] for x in piernas] + pies + [b for b, _ in brazos]:
-        if o is None or not (o.animation_data and o.animation_data.action):
+        bag = _fcurve_bag(o) if o is not None else None     # ranuras (4.4+) o Action.fcurves (4.2-4.3)
+        if bag is None:
             continue
-        for fc in action_get_channelbag_for_slot(o.animation_data.action, o.animation_data.action_slot).fcurves:
+        for fc in bag.fcurves:
             for k in fc.keyframe_points:
                 k.interpolation = 'LINEAR'
     s.frame_set(1)
@@ -2540,11 +2633,86 @@ def op_export(args):
 
 # ----------------------------------------------------------------------------------- despacho
 
+def _draw_polyline(img, pts, color, closed=True, width=1):
+    """Dibuja una polilínea (en píxeles, filas de arriba abajo) sobre img (h, w, 4)."""
+    import numpy as np
+    h, w = img.shape[:2]
+    q = np.vstack([pts, pts[:1]]) if closed else pts
+    for a, b in zip(q[:-1], q[1:]):
+        n = int(max(abs(b[0] - a[0]), abs(b[1] - a[1])) * 2) + 2
+        t = np.linspace(0, 1, n)[:, None]
+        p = a + (b - a) * t
+        for dx in range(-width + 1, width):
+            for dy in range(-width + 1, width):
+                xs = np.clip(np.round(p[:, 0]).astype(int) + dx, 0, w - 1)
+                ys = np.clip(np.round(p[:, 1]).astype(int) + dy, 0, h - 1)
+                img[ys, xs, :3] = color
+
+
+def op_contour(args):
+    """Analiza una imagen sin construir nada: qué contornos tiene, qué método y orden elige cada uno y
+    con qué error (outline), o qué perfil de torno sale (lathe: true). Con `preview` dibuja el
+    resultado sobre la imagen: cian = Fourier, magenta = polígono (con sus vértices en amarillo),
+    para lathe el eje en amarillo y el perfil en cian a los dos lados."""
+    import numpy as np
+    from . import contours
+    o = dict(args, type='lathe' if args.get('lathe') else 'outline')
+    _BUILD['baseDir'] = None
+    px, ruta = _image_px(o)
+    size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
+    tol = float(o.get('tolerance', 0.25))
+    if o['type'] == 'lathe':
+        perfil, info = contours.lathe_profile(px, size=size, axis=axis, tolerance=tol, side=o.get('side', 'both'),
+                                              threshold=o.get('threshold'), rings=int(o.get('profileRings', 64)))
+        res = dict(_public(info), profile=[[round(float(r), 4), round(float(z), 4)] for r, z in perfil])
+    else:
+        regs, info = contours.outline(px, size=size, axis=axis, tolerance=tol, method=o.get('method', 'auto'),
+                                      threshold=o.get('threshold'))
+        res = _public(info)
+        if args.get('coefficients'):
+            for l, c in zip(res['loops'], info['loops']):
+                if '_coef' in c:
+                    l['coefficients'] = c['_coef']
+    res['image'] = {'path': ruta, 'size': [int(px.shape[1]), int(px.shape[0])]}
+    if args.get('preview'):
+        img = px.copy()
+        img[..., :3] = img[..., :3] * 0.55 + 0.4
+        img[..., 3] = 1
+        fr = info['_frame']
+        if o['type'] == 'lathe':
+            k, eje, y0 = fr['k'], fr['axis'], fr['y0']
+            filas = -(y0 + perfil[:, 1] / k)
+            _draw_polyline(img, np.array([[eje, filas.min()], [eje, filas.max()]]), (1, 0.85, 0), False)
+            for lado in (-1, 1):
+                _draw_polyline(img, np.column_stack([eje + lado * perfil[:, 0] / k, filas]), (0, 0.8, 1), False, 2)
+        else:
+            k, c = fr['k'], np.array(fr['center'])
+            lazos = [l for r in regs for l in [r['outer']] + r['holes']]
+            for lazo, l in zip(lazos, info['loops']):
+                pxs = (lazo / k + c) * [1, -1]
+                fourier = l['method'] == 'fourier'
+                _draw_polyline(img, pxs, (0, 0.8, 1) if fourier else (1, 0.2, 0.75), True, 2)
+                if not fourier:
+                    for v in pxs:
+                        _draw_polyline(img, np.array([v - 2, v + 2]), (1, 0.85, 0), False, 2)
+        out = os.path.abspath(args['preview'])
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        im = bpy.data.images.new('bs_contour', img.shape[1], img.shape[0], alpha=False)
+        im.pixels.foreach_set(np.ascontiguousarray(img[::-1], dtype=np.float32).ravel())
+        im.filepath_raw = out
+        im.file_format = 'PNG'
+        im.save()
+        bpy.data.images.remove(im)
+        res['preview'] = out
+    return res
+
+
 OPS = {
     'ping': lambda a: {'pong': True},
     'info': op_info,
     'scene': op_scene,
     'build': op_build,
+    'contour': op_contour,
     'exec': op_exec,
     'save': op_save,
     'open': op_open,

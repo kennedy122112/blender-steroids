@@ -117,7 +117,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
-| `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso). Ver «Siluetas» |
+| `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla. Ver «Siluetas» |
 | `decal` | `size`: número o `[ancho, alto]`. Pintura plana (ojos, mejillas, manchas, logos, parches) que se pega con `attach` a la superficie y sigue su curvatura |
 | `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida que no salen de lo anterior). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |
@@ -145,8 +145,22 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
 `hausdorffPercent` (desviación máxima del borde, en % de la diagonal), `normalizedMaxErrorPercent`
 (Fourier) y `targetMet`. Si un contorno no llegó a la tolerancia hay un aviso: dilo, no lo des por bueno.
 
-- **La imagen**: una sola figura, recortada, con buen contraste con un fondo liso (o PNG transparente).
-  Un render de la referencia con luz y sombras no sirve tal cual: recorta la pieza o píntala plana.
+- **La imagen**: una sola figura, recortada, sobre un fondo liso (o PNG transparente). Una foto con
+  luces y brillos sirve (el borde se mide contra el contraste local), pero no una con fondo cargado.
+- **Antes de construir, mira qué entiende**: `blender-cli contour -Image silueta.png -Preview vista.png`
+  no toca la escena; dice regiones, huecos, método y error de cada contorno y dibuja el resultado sobre
+  la imagen (cian = Fourier, magenta = polígono con sus vértices en amarillo). Con `-Lathe [-Side left]`
+  muestra el eje y el perfil de torno. Úsalo para elegir `tolerance`, `method` o `threshold`.
+- **Malla o curva**: por defecto es una malla. Con `output: "curve"` es una curva 2D de Blender,
+  rellena y con grosor (`thickness`), que se edita moviendo puntos de control: los contornos suaves son
+  Bézier con pocos puntos (un círculo, 4; la llama del ejemplo, 52 para 89 coeficientes) y los
+  angulosos, polilíneas. Calza igual que la malla (IoU 0.988 las dos). Con `plane` XZ el objeto queda
+  girado 90° en X para estar de pie; si das `rotation`, súmale ese giro. Para cambiar de malla a curva
+  en un objeto que ya existe, bórralo antes (`delete`).
+- **Trazabilidad**: cada objeto hecho con `outline` o `lathe` + `image` guarda en la propiedad
+  `bs_source` con qué se hizo (parámetros, ruta y sha1 de la imagen, versión) y qué salió (método,
+  error y coeficientes de Fourier de cada contorno; el perfil del torno). Léela con `scene -Object`
+  o `exec` para explicar o rehacer una pieza.
 - **Tamaño**: `height` o `width` del conjunto en metros; con `origin: "bottom"` queda apoyada en el piso.
 - `tolerance` 0.25 % va bien a 1024 px; con imágenes chicas (< 400 px) usa 0.5 (el antialias redondea
   las esquinas ~1 px).
