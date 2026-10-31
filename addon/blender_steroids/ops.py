@@ -255,7 +255,7 @@ PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cyl
 
 # build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
 # lathe con imagen, y su fuente para guardarla en el objeto
-_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}}
+_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': []}
 
 
 def _fit(bm, target):
@@ -1224,9 +1224,108 @@ def _apply_modifiers(o, specs, warnings):
     o['bs_mods'] = names
 
 
+_MOTION_PROPS = ('location', 'rotation_euler', 'scale')
+
+
+def _apply_motion(a, warnings):
+    """Una entrada de animation con `motion`: calcula el valor de cada fotograma con dynamics y lo
+    hornea como claves lineales en UN canal (property + axis), sumado a su valor de reposo. Las demás
+    claves del objeto no se tocan. Deja en el objeto (bs_motion) el modelo, sus parámetros y el modo
+    (kinematic / ode_simulated)."""
+    from . import dynamics
+    o = _obj(a['object'])
+    prop = a.get('property', 'rotation')
+    target, path = (o.data, prop[5:]) if prop.startswith('data.') else (o, prop)
+    if path == 'rotation':
+        path = 'rotation_euler'
+    if target is o and path not in _MOTION_PROPS:
+        raise ValueError('motion anima location, rotation, scale o un dato con data. (no %s)' % prop)
+    if not hasattr(target, path) or callable(getattr(target, path)):
+        raise ValueError('«%s» no tiene la propiedad %s' % (o.name, prop))
+    actual = getattr(target, path)
+    vector = hasattr(actual, '__len__')
+    if not vector and not isinstance(actual, (int, float)):
+        raise ValueError('%s no es numérica' % prop)
+    eje = str(a.get('axis', 'z')).lower()
+    if vector and eje not in ('x', 'y', 'z'):
+        raise ValueError('axis debe ser x, y o z')
+    idx = 'xyz'.index(eje) if vector else -1
+    canal = '%s[%s]' % (prop, eje) if vector else prop
+    s = _scene()
+    fps = s.render.fps / s.render.fps_base
+    f0, f1 = (int(x) for x in a.get('frames', (s.frame_start, s.frame_end)))
+    if f1 < f0:
+        raise ValueError('frames: el final (%d) es menor que el inicio (%d)' % (f1, f0))
+    frames = list(range(f0, f1 + 1))
+    times = [(f - f0) / fps for f in frames]
+    m = dict(a['motion'])
+    error, aviso = dynamics.aliasing(dynamics.natural_frequency(m), fps)
+    if error:
+        raise ValueError('«%s»: %s' % (o.name, error))
+    accel = None
+    if m.get('kind') == 'follow':
+        guia = _obj(m.get('leader') or '')
+        ge = 'xyz'.index(str(m.get('leaderAxis', 'z')).lower())
+        antes = s.frame_current
+        pos = []
+        for f in range(f0 - 1, f1 + 2):
+            s.frame_set(f)
+            pos.append(guia.matrix_world.translation[ge])
+        s.frame_set(antes)
+        dt = 1 / fps
+        accel = [(pos[i + 1] - 2 * pos[i] + pos[i - 1]) / (dt * dt) for i in range(1, len(pos) - 1)]
+    vals, info = dynamics.simulate(m, times, accel)
+    if aviso:
+        info['warnings'].append(aviso)
+        warnings.append('«%s» %s: %s' % (o.name, canal, aviso))
+    # valor de reposo: el que tenía antes del primer motion de ese canal (guardado), o `base`
+    bases = json.loads(o.get('bs_motion_base', '{}'))
+    if 'base' in a:
+        base = float(a['base'])
+    elif canal in bases:
+        base = bases[canal]
+    else:
+        v = actual[idx] if vector else actual
+        base = math.degrees(v) if path == 'rotation_euler' else float(v)
+    bases[canal] = base
+    o['bs_motion_base'] = json.dumps(bases)
+    bag = _fcurve_bag(target)
+    if bag is not None:
+        for fc in [fc for fc in bag.fcurves if fc.data_path == path and (not vector or fc.array_index == idx)]:
+            bag.fcurves.remove(fc)
+    for f, v in zip(frames, vals):
+        valor = base + v
+        if path == 'rotation_euler':
+            valor = math.radians(valor)
+        if vector:
+            vec = list(getattr(target, path))
+            vec[idx] = valor
+            setattr(target, path, vec)
+            target.keyframe_insert(data_path=path, index=idx, frame=f)
+        else:
+            setattr(target, path, valor)
+            target.keyframe_insert(data_path=path, frame=f)
+    bag = _fcurve_bag(target)
+    if bag is not None:
+        for fc in bag.fcurves:
+            if fc.data_path == path and (not vector or fc.array_index == idx):
+                for kp in fc.keyframe_points:
+                    kp.interpolation = 'LINEAR'
+    registro = json.loads(o.get('bs_motion', '{}'))
+    registro[canal] = {'kind': m.get('kind'), 'mode': info['mode'], 'params': m, 'base': base,
+                       'frames': [f0, f1], 'fps': fps}
+    o['bs_motion'] = json.dumps(registro, ensure_ascii=False)
+    return dict(info, object=o.name, channel=canal, frameRange=[f0, f1], fps=fps)
+
+
 def _apply_animation(anims, warnings):
     out = 0
     for a in anims:
+        if 'motion' in a:
+            r = _apply_motion(a, warnings)
+            _BUILD['motions'].append(r)
+            out += r['frames']
+            continue
         o = _obj(a['object'])
         prop = a.get('property', 'location')
         target, path = (o.data, prop[5:]) if prop.startswith('data.') else (o, prop)
@@ -1318,6 +1417,7 @@ def op_build(spec):
     _BUILD['baseDir'] = base_dir
     _BUILD['outlines'] = {}
     _BUILD['sources'] = {}
+    _BUILD['motions'] = []
 
     if spec.get('removeDefaults'):
         for n, t in DEFAULT_OBJECTS.items():
@@ -1454,6 +1554,8 @@ def op_build(spec):
         except Exception:
             pass
     res = {'created': created, 'updated': updated, 'materialsCreated': mats_new, 'keyframes': keys}
+    if _BUILD['motions']:
+        res['motions'] = _BUILD['motions']
     if _BUILD['outlines']:
         res['outlines'] = _BUILD['outlines']
         for n, inf in _BUILD['outlines'].items():

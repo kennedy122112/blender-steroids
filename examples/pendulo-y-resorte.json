@@ -1,0 +1,41 @@
+{
+  "removeDefaults": true,
+  "scene": {
+    "engine": "eevee",
+    "resolution": [1280, 720],
+    "fps": 30,
+    "frames": [1, 150],
+    "world": { "color": "#20242c", "strength": 0.7 }
+  },
+  "materials": [
+    { "name": "Madera", "color": "#8a5a32", "roughness": 0.6 },
+    { "name": "Metal", "color": "#c9ccd1", "metallic": 1, "roughness": 0.3 },
+    { "name": "Rojo", "color": "#d6453d", "roughness": 0.4 },
+    { "name": "Piso", "color": "#3a3f47", "roughness": 0.9 }
+  ],
+  "objects": [
+    { "name": "Piso", "type": "plane", "size": 6, "material": "Piso" },
+    { "name": "Viga", "type": "cube", "size": [1.6, 0.08, 0.08], "location": [0, 0, 1.6], "material": "Madera" },
+    { "name": "PosteI", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [-0.76, 0, 0], "material": "Madera" },
+    { "name": "PosteD", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [0.76, 0, 0], "material": "Madera" },
+
+    { "name": "Eje", "type": "empty", "location": [-0.3, 0, 1.56], "size": 0.05 },
+    { "name": "Cuerda", "type": "cylinder", "radius": 0.006, "depth": 0.66, "location": [-0.3, 0, 1.23], "material": "Metal", "parent": "Eje" },
+    { "name": "Bola", "type": "sphere", "radius": 0.07, "location": [-0.3, 0, 0.86], "material": "Metal", "parent": "Eje", "smooth": true },
+
+    { "name": "Ancla", "type": "empty", "location": [0.4, 0, 0.9], "size": 0.05 },
+    { "name": "Guia", "type": "cylinder", "radius": 0.04, "depth": 0.1, "location": [0.4, 0, 1.6], "material": "Metal" },
+    { "name": "Varilla", "type": "cylinder", "radius": 0.015, "depth": 0.9, "location": [0.4, 0, 1.43], "material": "Metal", "parent": "Ancla" },
+    { "name": "Caja", "type": "cube", "size": [0.18, 0.18, 0.16], "location": [0.4, 0, 0.9], "material": "Rojo", "parent": "Ancla",
+      "modifiers": [{ "type": "bevel", "width": 0.01, "segments": 2 }] },
+
+    { "name": "Sol", "type": "light", "light": "sun", "energy": 3, "rotation": [50, 0, 30] },
+    { "name": "Camara", "type": "camera", "frame": ["Viga", "PosteI", "PosteD", "Bola", "Caja"], "view": "front", "margin": 1.2 }
+  ],
+  "animation": [
+    { "object": "Eje", "property": "rotation", "axis": "y",
+      "motion": { "kind": "pendulum", "length": 0.7, "initial": 30, "damping": 0.15 } },
+    { "object": "Ancla", "property": "location", "axis": "z",
+      "motion": { "kind": "spring", "frequency": 1.2, "dampingRatio": 0.12, "initial": -0.12 } }
+  ]
+}
