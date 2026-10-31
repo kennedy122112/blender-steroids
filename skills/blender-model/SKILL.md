@@ -1,6 +1,6 @@
 ---
 name: blender-model
-description: Crea y modifica escenas 3D reales y editables en Blender a partir de lenguaje natural - objetos, muebles, productos, maquetas, escenarios, texto 3D, materiales, luces, cámara y animación simple - y las revisa renderizando. Úsala cuando el usuario diga "modela en Blender", "crea una escena / un objeto / un producto en 3D", "arma una maqueta", "pon luces y cámara", "cambia el material", "anima esto", "hazme un logo 3D", "convierte esta silueta / este logo en 3D", "build X in Blender".
+description: Crea y modifica escenas 3D reales y editables en Blender a partir de lenguaje natural - objetos, muebles, productos, maquetas, escenarios, texto 3D, materiales, luces, cámara y animación simple - y las revisa renderizando. Úsala cuando el usuario diga "modela en Blender", "crea una escena / un objeto / un producto en 3D", "arma una maqueta", "pon luces y cámara", "cambia el material", "anima esto", "que aletee / rebote / se balancee", "hazme un logo 3D", "convierte esta silueta / este logo en 3D", "build X in Blender".
 ---
 
 # Modelar en Blender
@@ -293,6 +293,33 @@ Para el look de los juegos 3D de consolas de 32 bits:
 `animation: [{ object, property, keys: [{frame, value}], interpolation }]`. `property`: `location`,
 `rotation` (grados), `scale`, o un dato del objeto con `data.` (`data.energy` de una luz, `data.lens` de
 una cámara). Al repetir `build` las claves de esa propiedad se reemplazan. Fija `scene.frames`.
+
+### Movimiento con ecuaciones (`motion`)
+Para todo lo que oscila, rebota, cuelga o se bambolea, **no inventes claves**: en una entrada de
+`animation` pon `motion` en vez de `keys`, con `property` (`location`, `rotation` en grados, `scale` o
+`data.x`), `axis` (x/y/z) y `frames` (por defecto los de la escena). Se calcula un valor por fotograma y
+se hornea como claves lineales en ese único canal, **sumado a su valor de reposo** (el que tenía la
+primera vez; repetir `build` no lo corre ni duplica claves). Los otros ejes y animaciones no se tocan.
+
+| kind | Para qué | Parámetros |
+|---|---|---|
+| `oscillate` | Cinemático: alas, ventiladores, respirar, flotar, una señal que parpadea | `frequency` (Hz), `amplitude`, `phase` (grados), `offset` |
+| `spring` | Simulado: rebota y se asienta (un golpe, una caída, un *squash*) | `frequency` + `dampingRatio` (0 sin pérdida, 1 crítico), o `mass` + `stiffness` + `damping`; `initial`, `velocity`, `force` |
+| `pendulum` | Simulado: péndulo real, también con ángulos grandes | `length` (m), `initial` (grados), `velocity`, `damping`, `gravity` (9.81) |
+| `follow` | Simulado: movimiento secundario (antenas, orejas, colas, cables) que sigue a otro objeto con retraso y rebote | `leader` (objeto), `leaderAxis` (eje de su aceleración en el mundo), `frequency`, `dampingRatio` (0.3), `gain` (grados o m que se inclina por cada m/s² del guía) |
+
+- **Pivote**: la rotación es alrededor del origen del objeto. Para un ala, una antena o un péndulo crea
+  un `empty` en la bisagra, emparenta la pieza (`parent`) y anima el empty (así lo hace
+  `examples/libelula.json`).
+- **Aliasing**: los fps tienen que alcanzar para la frecuencia. Con 2 fotogramas o menos por ciclo,
+  build da error (se vería quieto o al revés); con menos de 8, aviso de que se verá entrecortado. Un
+  aleteo real de 30 Hz no se puede mostrar a 24 fps: baja la frecuencia o sube `scene.fps`.
+- El resultado de build trae `motions` (canal, `mode` kinematic u ode_simulated, fotogramas, máximo) y
+  cada objeto guarda en `bs_motion` el modelo y sus parámetros. Dile al usuario si es cinemático
+  (una fórmula) o simulado (una ecuación integrada): **no es física de choques ni de aerodinámica**.
+- `follow` con `walk`: después de `walk`, crea la bisagra de la antena con `parent: "bs_walk_cabeza"`,
+  cuelga la antena de ella y usa `leader: "bs_walk_cabeza"`, `leaderAxis: "z"` (el rebote del paso).
+- Se exporta: el GLB lleva un canal de animación por cada motion (verificado).
 
 ### Actualizar lo que existe
 Un objeto que ya existe se busca por `name` y solo cambia lo que pongas: `{ "name": "Tablero", "material": "Rojo" }`

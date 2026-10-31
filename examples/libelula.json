@@ -1,0 +1,70 @@
+{
+  "removeDefaults": true,
+  "scene": {
+    "engine": "eevee",
+    "resolution": [1280, 720],
+    "fps": 60,
+    "frames": [1, 120],
+    "world": { "color": "#1e2a24", "strength": 0.8 }
+  },
+  "materials": [
+    { "name": "Cuerpo", "color": "#1f8a70", "roughness": 0.3, "metallic": 0.4, "coat": 0.6 },
+    { "name": "Anillos", "color": "#0f3d33", "roughness": 0.4 },
+    { "name": "Ojos", "color": "#3b5bdb", "roughness": 0.15, "coat": 1 },
+    { "name": "Ala", "color": "#d8f0ff", "roughness": 0.08, "transmission": 0.85, "ior": 1.3 },
+    { "name": "Piso", "color": "#2c3a30", "roughness": 0.95 }
+  ],
+  "objects": [
+    { "name": "Piso", "type": "plane", "size": 6, "material": "Piso" },
+
+    { "name": "Libelula", "type": "empty", "location": [0, 0, 0.6], "size": 0.1 },
+    { "name": "Torax", "type": "superellipsoid", "size": [0.11, 0.17, 0.11], "roundness": 0.8,
+      "location": [0, 0.2, 0.6], "material": "Cuerpo", "parent": "Libelula", "smooth": true },
+    { "name": "Cabeza", "type": "superellipsoid", "size": [0.1, 0.08, 0.08], "roundness": 0.9,
+      "location": [0, 0.33, 0.61], "material": "Cuerpo", "parent": "Libelula", "smooth": true },
+    { "name": "OjoD", "type": "sphere", "radius": 0.042, "location": [0.04, 0.35, 0.63], "material": "Ojos",
+      "parent": "Libelula", "smooth": true },
+    { "name": "OjoI", "type": "sphere", "radius": 0.042, "location": [-0.04, 0.35, 0.63], "material": "Ojos",
+      "parent": "Libelula", "smooth": true },
+    { "name": "BisagraAbdomen", "type": "empty", "location": [0, 0.12, 0.6], "size": 0.03, "parent": "Libelula" },
+    { "name": "Abdomen", "type": "tube", "curve": [[0, 0.12, 0.6], [0, -0.15, 0.6], [0, -0.42, 0.57]],
+      "radii": [0.03, 0.016], "segments": 16, "location": [0, 0, 0], "material": "Cuerpo",
+      "parent": "BisagraAbdomen", "smooth": true },
+    { "name": "Punta", "type": "sphere", "radius": 0.017, "location": [0, -0.425, 0.57], "material": "Anillos",
+      "parent": "BisagraAbdomen", "smooth": true },
+
+    { "name": "BisagraDA", "type": "empty", "location": [0.045, 0.24, 0.64], "size": 0.03, "parent": "Libelula" },
+    { "name": "BisagraDT", "type": "empty", "location": [0.045, 0.15, 0.64], "size": 0.03, "parent": "Libelula" },
+    { "name": "BisagraIA", "type": "empty", "location": [-0.045, 0.24, 0.64], "size": 0.03, "parent": "Libelula" },
+    { "name": "BisagraIT", "type": "empty", "location": [-0.045, 0.15, 0.64], "size": 0.03, "parent": "Libelula" },
+    { "name": "AlaDA", "type": "outline", "image": "libelula/ala.png", "width": 0.46, "thickness": 0.003,
+      "plane": "XY", "location": [0.27, 0.24, 0.64], "material": "Ala", "parent": "BisagraDA" },
+    { "name": "AlaDT", "type": "outline", "image": "libelula/ala.png", "width": 0.42, "thickness": 0.003,
+      "plane": "XY", "location": [0.25, 0.15, 0.64], "material": "Ala", "parent": "BisagraDT" },
+    { "name": "AlaIA", "type": "outline", "image": "libelula/ala.png", "width": 0.46, "thickness": 0.003,
+      "plane": "XY", "scale": [-1, 1, 1], "location": [-0.27, 0.24, 0.64], "material": "Ala", "parent": "BisagraIA" },
+    { "name": "AlaIT", "type": "outline", "image": "libelula/ala.png", "width": 0.42, "thickness": 0.003,
+      "plane": "XY", "scale": [-1, 1, 1], "location": [-0.25, 0.15, 0.64], "material": "Ala", "parent": "BisagraIT" },
+
+    { "name": "Sol", "type": "light", "light": "sun", "energy": 3, "rotation": [45, 10, 30] },
+    { "name": "Relleno", "type": "light", "light": "area", "energy": 60, "size": 2, "location": [-1.2, -1.2, 1.4],
+      "lookAt": [0, 0, 0.6] },
+    { "name": "Camara", "type": "camera", "frame": ["Torax", "AlaDA", "AlaIA", "Abdomen", "AlaDT", "AlaIT"],
+      "view": "iso", "margin": 1.25 }
+  ],
+  "animation": [
+    { "object": "BisagraDA", "property": "rotation", "axis": "y",
+      "motion": { "kind": "oscillate", "frequency": 6, "amplitude": 32, "offset": -5 } },
+    { "object": "BisagraIA", "property": "rotation", "axis": "y",
+      "motion": { "kind": "oscillate", "frequency": 6, "amplitude": 32, "offset": 5, "phase": 180 } },
+    { "object": "BisagraDT", "property": "rotation", "axis": "y",
+      "motion": { "kind": "oscillate", "frequency": 6, "amplitude": 28, "offset": -5, "phase": 90 } },
+    { "object": "BisagraIT", "property": "rotation", "axis": "y",
+      "motion": { "kind": "oscillate", "frequency": 6, "amplitude": 28, "offset": 5, "phase": 270 } },
+    { "object": "Libelula", "property": "location", "axis": "z",
+      "motion": { "kind": "oscillate", "frequency": 1, "amplitude": 0.02 } },
+    { "object": "BisagraAbdomen", "property": "rotation", "axis": "x",
+      "motion": { "kind": "follow", "leader": "Libelula", "leaderAxis": "z", "frequency": 2.5,
+                  "dampingRatio": 0.25, "gain": 2.0 } }
+  ]
+}

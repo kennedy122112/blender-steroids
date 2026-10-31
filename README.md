@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.13.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.14.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -33,7 +33,7 @@
 - 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
-- 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave.
+- 🎞️ **Anima** posición, rotación, escala o cualquier propiedad, con sus fotogramas clave, o **con ecuaciones**: aleteos y oscilaciones por frecuencia, resortes que rebotan y se asientan, péndulos reales y movimiento secundario (una antena que se bambolea al caminar), con aviso si los fps no alcanzan.
 - 👀 **Se revisa a sí mismo**: renderiza vistas de control (iso, frente, arriba...) y corrige lo que se ve mal antes de entregarte.
 - 📸 **Renderiza** imágenes y animaciones con EEVEE o Cycles, sin congelar tu Blender.
 - 📦 **Exporta** a GLB/glTF, FBX, OBJ, STL (impresión 3D), PLY y USD.
@@ -154,6 +154,7 @@ Está pensado para modelado por piezas (hard-surface, mobiliario, producto, maqu
 - Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD) y con Blender 4.2 LTS (pruebas, ejemplos, render, retro, Cycles, check, export, compare, walk, curvas, contour e import). Un `.blend` guardado en 5.x no abre en 4.2. Linux: lanzador, `status` y `doctor` probados en Ubuntu (WSL) sin Blender. macOS: soportado, sin probar en un equipo real.
 - El modelado declarativo cubre primitivas, mallas por vértices, texto, modificadores, materiales Principled, luces, cámaras y animación por fotogramas clave. Nodos de geometría, rigs, partículas y físicas van por código `bpy` (`exec`).
 - `outline` convierte siluetas en piezas planas o de grosor uniforme: una sola imagen no da profundidad, así que los volúmenes se siguen modelando con primitivas.
+- `motion` hornea movimientos de un canal (oscilar, resorte, péndulo, seguir a otro): no simula choques, tela, fluidos ni aerodinámica (eso va con la física de Blender por `exec`), y no usa modelos aprendidos.
 - Si el spec cambia la forma de un objeto, su malla se rehace y se pierden ediciones hechas a mano en ella.
 - En vivo, un `build` grande bloquea Blender mientras se ejecuta (segundos).
 
@@ -208,14 +209,14 @@ Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-c
 | `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
-El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo; y `lathe` desde la foto de un jarrón con asa).
+El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo; y `lathe` desde la foto de un jarrón con asa), [`examples/libelula.json`](examples/libelula.json) (alas de `outline` que aletean con `motion`) y [`examples/pendulo-y-resorte.json`](examples/pendulo-y-resorte.json).
 
 ### Estructura del repo
 
 | Ruta | Contenido |
 |---|---|
-| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos; solo NumPy) |
-| `tests/` | Pruebas del núcleo de contornos: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
+| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos; solo NumPy), `dynamics.py` (oscilar, resorte, péndulo y seguir, con RK4; sin dependencias) |
+| `tests/` | Pruebas de contornos y de movimiento: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
 | `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
 | `skills/` | Las cuatro skills (`SKILL.md`) |
