@@ -14,6 +14,7 @@ import os
 import sys
 import traceback
 from mathutils import Euler, Matrix, Vector
+from mathutils.geometry import tessellate_polygon
 
 # ----------------------------------------------------------------------------------- utilidades
 
@@ -245,10 +246,15 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'majorRadius', 'minorRadius', 'minorSegments', 'fill', 'vertices', 'edges', 'faces',
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
-             'fingers', 'scallop', 'bend', 'bones')
+             'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
+             'plane')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
-              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane'}
+              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
+              'outline'}
+
+# build deja aquí la carpeta del spec (rutas de imágenes de outline) y las medidas de cada outline
+_BUILD = {'baseDir': None, 'outlines': {}}
 
 
 def _fit(bm, target):
@@ -484,6 +490,58 @@ def _membrane(bm, o):
             _tube(bm, {'points': [list(p) for p in pts], 'radii': [r0, r1], 'segments': 12})
 
 
+def _outline(bm, o, name):
+    """Silueta plana o extruida a partir de una imagen (`image`: figura sobre fondo liso, o PNG con
+    transparencia) o de puntos (`points` [[x, y], ...] en metros, con `holes` [[[x, y], ...], ...]).
+    Cada contorno se simplifica con Fourier (curvas suaves) o como polígono (esquinas vivas) según
+    `method` (auto | fourier | polygon), con un error máximo de `tolerance` % de la diagonal (0.25).
+    Tamaño con `width` o `height` en metros (una imagen, si no, mide 1 m de ancho). `thickness` 0.02
+    (0 = solo la cara); `plane` 'XZ' (de pie, de frente a -Y como la vista front) o 'XY' (en el piso).
+    Las medidas quedan en el resultado de build (`outlines`)."""
+    from . import contours
+    if o.get('image'):
+        ruta = _path(o['image'], _BUILD['baseDir'])
+        px = _load_pixels(ruta)
+        if px.shape[0] > 1024:
+            px = _load_pixels(ruta, 1024)
+        fuente = px[::-1]                                   # el núcleo espera filas de arriba abajo
+    elif o.get('points'):
+        fuente = [{'outer': o['points'], 'holes': o.get('holes', [])}]
+    else:
+        raise ValueError('outline necesita image (una silueta) o points')
+    size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
+    regs, info = contours.outline(fuente, size=size, axis=axis, tolerance=float(o.get('tolerance', 0.25)),
+                                  method=o.get('method', 'auto'), threshold=o.get('threshold'))
+    _BUILD['outlines'][name] = {
+        'regions': info['regions'], 'holes': info['holes'], 'size': info['size'],
+        'tolerancePercent': info['tolerancePercent'], 'targetMet': info['targetMet'],
+        'loops': [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in l.items()
+                   if k not in ('hausdorff', 'maxCorrespondenceError')} for l in info['loops']]}
+    xz = str(o.get('plane', 'XZ')).upper() == 'XZ'
+    for r in regs:
+        polis = [[Vector((x, 0.0, y) if xz else (x, y, 0.0)) for x, y in lazo]
+                 for lazo in [r['outer']] + r['holes']]
+        vs = [bm.verts.new(v) for pol in polis for v in pol]
+        # tessellate_polygon acepta exterior + huecos: triángulos con índices sobre la lista aplanada
+        for tri in tessellate_polygon(polis):
+            try:
+                bm.faces.new([vs[i] for i in tri])
+            except ValueError:
+                pass
+    frente = Vector((0, -1, 0)) if xz else Vector((0, 0, 1))
+    for f in bm.faces:
+        f.normal_update()
+        if f.normal.dot(frente) < 0:
+            f.normal_flip()
+    th = float(o.get('thickness', 0.02))
+    if th > 0:
+        geo = bmesh.ops.extrude_face_region(bm, geom=list(bm.faces))
+        atras = [g for g in geo['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, vec=-frente * th, verts=atras)
+        bmesh.ops.translate(bm, vec=frente * (th / 2), verts=bm.verts)   # centrada en su grosor
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+
 def build_mesh(o, name):
     t = o.get('type', 'cube').lower()
     bm = bmesh.new()
@@ -521,6 +579,8 @@ def build_mesh(o, name):
         _superellipsoid(bm, o)
     elif t == 'membrane':
         _membrane(bm, o)
+    elif t == 'outline':
+        _outline(bm, o, name)
     elif t == 'blobby':
         bm.free()
         me = _blobby(o, name)
@@ -1150,6 +1210,8 @@ def op_build(spec):
     """Crea o actualiza (por nombre) materiales, colecciones, objetos, luces, cámaras y animación."""
     warnings, created, updated, removed = [], [], [], []
     base_dir = spec.get('_baseDir')
+    _BUILD['baseDir'] = base_dir
+    _BUILD['outlines'] = {}
 
     if spec.get('removeDefaults'):
         for n, t in DEFAULT_OBJECTS.items():
@@ -1281,6 +1343,12 @@ def op_build(spec):
         except Exception:
             pass
     res = {'created': created, 'updated': updated, 'materialsCreated': mats_new, 'keyframes': keys}
+    if _BUILD['outlines']:
+        res['outlines'] = _BUILD['outlines']
+        for n, inf in _BUILD['outlines'].items():
+            if not inf['targetMet']:
+                warnings.append('«%s»: algún contorno no llegó a la tolerancia de %s %% (mira outlines)'
+                                % (n, inf['tolerancePercent']))
     if removed:
         res['removed'] = removed
     if warnings:
@@ -1452,12 +1520,15 @@ def _resize(px, w, h):
     return out.reshape(nh, nw, 4)
 
 
-def _subject_mask(px):
-    """Figura de la referencia: lo que se aparta del color de fondo (la mediana del borde), sin líneas
-    sueltas (cuadrícula del visor, gizmos): solo filas y columnas con suficiente figura."""
+def _subject_mask(px, holes='fill'):
+    """Figura de la referencia: lo que se aparta del color de fondo (la mediana del borde, por fila), sin
+    líneas sueltas (cuadrícula del visor, gizmos) ni recortes de la interfaz. Conserva las partes finas
+    y separadas de una misma fila (dientes, cuernos, dedos, brazos sueltos del torso). Los huecos
+    cerrados se tapan con holes='fill' (la zona del mismo color que el fondo, p. ej. una barriga blanca
+    sobre fondo blanco, no se confunde con un agujero) o se conservan con holes='keep'."""
     import numpy as np
     if px[..., 3].min() < 0.5:                     # imagen con transparencia: el alfa ya es la figura
-        return _fill_rows(px[..., 3] > 0.5)
+        return _holes(_largest_component(px[..., 3] > 0.5), holes)
     h, w = px.shape[:2]
     # fondo por fila (los visores y estudios suelen tener degradado vertical): mediana de los bordes
     b = max(4, w // 40)
@@ -1465,16 +1536,58 @@ def _subject_mask(px):
     fondo = np.median(borde, axis=1)                                   # (h, 3)
     ruido = np.abs(borde - fondo[:, None]).max(axis=2)
     m = np.abs(px[..., :3] - fondo[:, None]).max(axis=2) > max(0.035, float(np.percentile(ruido, 95)) * 1.5)
-    # fuera las líneas sueltas (cuadrícula, gizmos): solo filas y columnas con bastante figura
-    filas = m.sum(axis=1) > 0.06 * w
-    cols = m.sum(axis=0) > 0.06 * h
-    m = m & filas[:, None] & cols[None, :]
-    # y fuera lo que no está unido a la figura (iconos y botones de un visor que quedaron en el recorte)
-    return _fill_rows(_largest_component(m))
+    # fuera las líneas de 1-2 px (cuadrícula, gizmos) y lo que no está unido a la figura
+    return _holes(_largest_component(_opening(m)), holes)
 
 
-def _largest_component(m):
-    """Se queda con la región conectada más grande (en una versión reducida, para ir rápido)."""
+def _dilate(m, n=1):
+    """Dilatación con una cruz 3x3, n veces."""
+    for _ in range(n):
+        d = m.copy()
+        d[1:] |= m[:-1]
+        d[:-1] |= m[1:]
+        d[:, 1:] |= m[:, :-1]
+        d[:, :-1] |= m[:, 1:]
+        m = d
+    return m
+
+
+def _erode(m, n=1):
+    return ~_dilate(~m, n)
+
+
+def _opening(m):
+    """Erosión y dilatación con una cruz 3x3: borra líneas de hasta 2 px y deja intacto lo demás."""
+    return _dilate(_erode(m)) & m
+
+
+def _filled(m):
+    """La silueta con sus huecos cerrados tapados: se rellena cada contorno exterior por separado, así
+    una isla dentro de un hueco no vacía a su contenedor."""
+    from . import contours
+    out = m.copy()
+    for r in contours.regions(contours.trace(m.astype('float64'))):
+        out |= contours.rasterize([r['outer'] * [1, -1]], m.shape, (0.0, 0.0), 1.0)
+    return out
+
+
+def _holes(m, mode='fill'):
+    """Tapa los huecos de una silueta (mode='fill') o la deja como está ('keep'). Además de los huecos
+    cerrados, tapa las zonas interiores que solo se abren al fondo por una rendija de hasta ~6 px (una
+    parte del mismo color que el fondo pegada al borde), sin rellenar las muescas del contorno."""
+    if mode == 'keep' or not m.any():
+        return m
+    if mode != 'fill':
+        raise ValueError('holes debe ser fill o keep')
+    cerrado = _erode(_dilate(m, 3), 3)
+    interior = _filled(cerrado) & ~cerrado
+    rendijas = cerrado & ~m & _dilate(interior)
+    return _filled(m) | interior | rendijas
+
+
+def _largest_component(m, keep=0.1):
+    """Se queda con la región conectada más grande y con las que miden al menos `keep` de ella (una
+    figura con partes sueltas), sin iconos ni botones chicos (en una versión reducida, para ir rápido)."""
     import numpy as np
     from collections import deque
     h, w = m.shape
@@ -1502,24 +1615,10 @@ def _largest_component(m):
         tam[n] = c
     if not tam:
         return m
-    mayor = max(tam, key=tam.get)
-    keep = np.repeat(np.repeat(lab == mayor, k, axis=0), k, axis=1)[:h, :w]
-    return m & keep
-
-
-def _fill_rows(m):
-    """Silueta llena: en cada fila, de la primera a la última columna de figura (tapa los huecos que
-    dejan las zonas del mismo color que el fondo)."""
-    import numpy as np
-    out = np.zeros_like(m)
-    salto = max(3, int(0.06 * m.shape[1]))          # huecos mayores separan la figura de líneas sueltas
-    for y in np.nonzero(m.any(axis=1))[0]:
-        xs = np.nonzero(m[y])[0]
-        cortes = np.nonzero(np.diff(xs) > salto)[0]
-        tramos = np.split(xs, cortes + 1)
-        mayor = max(tramos, key=len)                # la figura es el tramo con más píxeles de la fila
-        out[y, mayor[0]:mayor[-1] + 1] = True
-    return out
+    mayor = max(tam.values())
+    grandes = [n_ for n_, c in tam.items() if c >= keep * mayor]
+    quedan = np.repeat(np.repeat(np.isin(lab, grandes), k, axis=0), k, axis=1)[:h, :w]
+    return m & quedan
 
 
 def _bbox(mask):
@@ -1542,12 +1641,14 @@ def _edges(mask):
 def op_compose(args):
     """Referencia | render alineado | siluetas superpuestas, con guías cada 10 % del alto de la figura.
     El render se escala y se mueve para que su figura ocupe la misma caja que la de la referencia
-    (alto igual, centrada en x, apoyada en la misma base). Devuelve medidas para comparar sin adivinar."""
+    (alto igual, centrada en x, apoyada en la misma base). Devuelve medidas para comparar sin adivinar.
+    holes: 'fill' (por defecto) o 'keep', igual para la referencia y para el render."""
     import numpy as np
     h = int(args.get('height', 800))
+    holes = args.get('holes', 'fill')
     ref = _load_pixels(args['reference'], h)
     ren = _load_pixels(args['render'])
-    rmask = _subject_mask(ref)
+    rmask = _subject_mask(ref, holes)
     rb = _bbox(rmask)
     gmask_full = ren[..., 3] > 0.5
     gb = _bbox(gmask_full)
@@ -1566,7 +1667,7 @@ def op_compose(args):
         info['scale'] = round(k, 3)
     elif ren.shape[0] != h:
         ren = _resize(ren, round(ren.shape[1] * h / ren.shape[0]), h)
-    gmask = ren[..., 3] > 0.5
+    gmask = _holes(ren[..., 3] > 0.5, holes)
     gb = _bbox(gmask)
     # el render va sobre gris medio; la referencia, si era transparente, sobre blanco
     a = ren[..., 3:4]
@@ -1682,7 +1783,7 @@ def _fit_view(args, ref_mask):
                 s.render.filepath = tmp
                 bpy.ops.render.render(write_still=True)
                 px = _load_pixels(tmp)
-                m = _mask_crop(px[..., 3] > 0.5, H)
+                m = _mask_crop(_holes(px[..., 3] > 0.5, args.get('holes', 'fill')), H)
                 iou = _iou_aligned(ref_c, m) if m is not None else 0.0
                 pruebas.append((iou, az, el, d))
     finally:
@@ -1759,14 +1860,16 @@ def op_compare(args):
     tmp = os.path.splitext(out)[0] + '_render.png'
     fit = None
     if args.get('fitView'):
-        fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400)))
+        fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400),
+                                            args.get('holes', 'fill')))
         args = dict(args, view=fit['view'])
     # transparente: así la figura del render se separa del fondo sin adivinar
     r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
     zg, bordes = _z_by_guide(tmp, args.get('objects'))
     c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
                     'height': int(args.get('height', 800)), 'guides': args.get('guides', True),
-                    'align': args.get('align', True), 'overlay': args.get('overlay', True)})
+                    'align': args.get('align', True), 'overlay': args.get('overlay', True),
+                    'holes': args.get('holes', 'fill')})
     if zg:
         c['alignment']['zByGuide'] = zg
         c['alignment']['edgesByGuide'] = bordes
@@ -1861,7 +1964,7 @@ def op_fit(args):
     refs = []
     for r in entrada:
         r = {'path': r} if isinstance(r, str) else dict(r)
-        mask = _subject_mask(_load_pixels(os.path.abspath(r['path']), 400))
+        mask = _subject_mask(_load_pixels(os.path.abspath(r['path']), 400), args.get('holes', 'fill'))
         crop = _mask_crop(mask, H)
         if crop is None:
             raise ValueError('No se detectó la figura en la referencia %s' % r['path'])
@@ -1937,7 +2040,7 @@ def op_fit(args):
             bpy.ops.render.render(write_still=True)
             px = _load_pixels(tmp)
             alfa = px[..., 3] > 0.5
-            m = _mask_crop(alfa, H)
+            m = _mask_crop(_holes(alfa, args.get('holes', 'fill')), H)
             ref['iou'] = _iou_aligned(ref['c'], m) if m is not None else 0.0
             valor = ref['iou']
             if colores and m is not None and ref['clases']:

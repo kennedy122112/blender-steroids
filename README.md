@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.10.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.11.0-0a7bbb?style=for-the-badge">
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
   <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/badge/license-MIT-5fa500?style=for-the-badge"></a>
@@ -29,6 +29,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
+- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros.
 - 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
@@ -152,6 +153,7 @@ Está pensado para modelado por piezas (hard-surface, mobiliario, producto, maqu
 
 - Probado en Windows 11 con Blender 5.2 LTS (EEVEE, Cycles y Workbench; exportadores GLB, FBX, OBJ, STL, PLY y USD). macOS y Linux: soportados, sin probar todavía en un equipo real.
 - El modelado declarativo cubre primitivas, mallas por vértices, texto, modificadores, materiales Principled, luces, cámaras y animación por fotogramas clave. Nodos de geometría, rigs, partículas y físicas van por código `bpy` (`exec`).
+- `outline` convierte siluetas en piezas planas o de grosor uniforme: una sola imagen no da profundidad, así que los volúmenes se siguen modelando con primitivas.
 - Si el spec cambia la forma de un objeto, su malla se rehace y se pierden ediciones hechas a mano en ella.
 - En vivo, un `build` grande bloquea Blender mientras se ejecuta (segundos).
 
@@ -182,7 +184,7 @@ Si el repositorio queda fuera de `~/.blender-steroids`, el instalador crea ese e
 
 ### blender-cli
 
-Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cli.ps1` sigue disponible); macOS/Linux: `bash bin/blender-cli <comando>` (o en cualquiera, `python3 bin/blender_cli.py <comando>`). Las opciones valen como `-Path x` o `--path x`. Toda salida es JSON, también los errores (`ok`, `error`, `hint`, `warnings`). Con `-File x.blend` cualquier comando trabaja sin interfaz.
+Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cli.ps1` sigue disponible); macOS/Linux: `bash bin/blender-cli <comando>` (o en cualquiera, `python3 bin/blender_cli.py <comando>`). Las opciones valen como `-Path x` o `--path x`. Toda salida es JSON, también los errores (`ok`, `error`, `hint`, `warnings`). Con `-File x.blend` cualquier comando trabaja sin interfaz.
 
 | Comando | Para qué |
 |---|---|
@@ -195,7 +197,7 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `exec -Script s.py [-Save x.blend]` | Ejecuta código `bpy`; devuelve `result` y `stdout` |
 | `render -Path img.png [...]` | Render (en vivo, sobre una copia en segundo plano) |
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
-| `compare -Reference ref.png -Path c.png [-FitView]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara |
+| `compare -Reference ref.png -Path c.png [-FitView] [-Holes keep]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara; `-Holes keep` respeta los agujeros reales |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
 | `walk -Spec caminata.json` | Ciclo de caminata sin huesos: pies planos y rebote medido en cada fotograma |
 | `render -Path x.png -Retro` | Look de consola de 32 bits: baja resolución, 15 bits con tramado, píxeles duros |
@@ -205,13 +207,14 @@ Windows: `binlender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-cl
 | `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
-El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces) y [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`).
+El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo).
 
 ### Estructura del repo
 
 | Ruta | Contenido |
 |---|---|
-| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`) |
+| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos; solo NumPy) |
+| `tests/` | Pruebas del núcleo de contornos: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
 | `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
 | `skills/` | Las cuatro skills (`SKILL.md`) |
