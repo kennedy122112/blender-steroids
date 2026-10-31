@@ -115,6 +115,33 @@ class Lazos(unittest.TestCase):
         self.assertEqual(info['vertices'], 10)
 
 
+
+class Bezier(unittest.TestCase):
+    def evaluar(self, pts, izq, der, n=64):
+        u = np.linspace(0, 1, n)[:, None]
+        sal = []
+        for i in range(len(pts)):
+            p0, p1, p2, p3 = pts[i], der[i], izq[(i + 1) % len(pts)], pts[(i + 1) % len(pts)]
+            sal.append((1 - u) ** 3 * p0 + 3 * (1 - u) ** 2 * u * p1 + 3 * (1 - u) * u ** 2 * p2 + u ** 3 * p3)
+        return np.vstack(sal)
+
+    def test_circulo_pocos_puntos(self):
+        lazo = C.resample(circulo(1.0), 256)
+        pts, izq, der, err = C.bezier(lazo, 0.001)
+        self.assertLessEqual(len(pts), 8)
+        self.assertLessEqual(err, 0.001)
+        radios = np.linalg.norm(self.evaluar(pts, izq, der), axis=1)
+        self.assertLess(np.abs(radios - 1).max(), 0.0015)
+
+    def test_forma_suave(self):
+        t = np.linspace(0, 2 * np.pi, 512, endpoint=False)
+        lazo = C.resample(np.column_stack([np.cos(t) * (1 + 0.25 * np.sin(5 * t)), np.sin(t) * (1 + 0.25 * np.sin(5 * t))]), 400)
+        pts, izq, der, err = C.bezier(lazo, 0.002)
+        self.assertLessEqual(err, 0.002)
+        self.assertLess(len(pts), 60)
+        self.assertLess(C.hausdorff(lazo, self.evaluar(pts, izq, der)), 0.004)
+
+
 class DesdeImagen(unittest.TestCase):
     def medir(self, regiones, n=256, **kw):
         img = imagen(regiones, n)

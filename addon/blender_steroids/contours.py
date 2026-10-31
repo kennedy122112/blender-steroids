@@ -292,8 +292,12 @@ def simplify(p, tol, method='auto', samples=1024, max_order=200):
     else:
         K, q, e, ok = fourier_fit(p, tol, max_order)
         out = resample(q, int(np.clip(8 * K, 48, 512)))
+        c = coefficients(p)
+        ks = np.arange(-K, K + 1)
         info = {'method': 'fourier', 'order': int(K), 'coefficients': 2 * K + 1, 'vertices': int(len(out)),
-                'maxCorrespondenceError': e, 'targetMet': bool(ok)}
+                'maxCorrespondenceError': e, 'targetMet': bool(ok),
+                # c_k de k=-K..K (curva en metros, centrada, arrancando en el punto más alto)
+                '_coef': [[round(float(c[k].real), 7), round(float(c[k].imag), 7)] for k in ks]}
     info['hausdorff'] = hausdorff(p, out)
     info['cornerFraction'] = round(esquinas, 3)
     return out, info
@@ -359,7 +363,8 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
             else:
                 nueva['outer'] = q
         salida.append(nueva)
-    info = {'regions': len(salida), 'holes': sum(len(r['holes']) for r in salida),
+    info = {'_frame': {'k': k, 'center': [float(centro[0]), float(centro[1])]},
+            'regions': len(salida), 'holes': sum(len(r['holes']) for r in salida),
             'size': [round(float(caja[0] * k), 4), round(float(caja[1] * k), 4)],
             'diagonal': round(diag, 4), 'tolerancePercent': float(tolerance), 'tolerance': tol,
             'targetMet': all(l['targetMet'] for l in lazos), 'loops': lazos}
@@ -433,7 +438,8 @@ def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', t
             'points': int(len(salida)), 'keyPoints': int(len(simple)), 'side': side,
             'tolerancePercent': float(tolerance),
             'maxErrorPercent': round(float(100 * err / (alto * k)), 3), 'targetMet': bool(err <= tol + 1e-12),
-            'asymmetryPercent': round(float(100 * asim / (alto * k)), 2)}
+            'asymmetryPercent': round(float(100 * asim / (alto * k)), 2),
+            '_frame': {'k': k, 'axis': eje, 'y0': float(y0)}}
     return salida, info
 
 
@@ -469,6 +475,62 @@ def _suave(perfil, simple, rings):
         pts = np.column_stack([np.interp(t, s, tramo[:, 0]), np.interp(t, s, tramo[:, 1])])
         partes.append(pts if not partes else pts[1:])
     return np.vstack(partes)
+
+
+def _bezier_error(S, p0, p1, p2, p3):
+    """Distancia máxima de las muestras S a la Bézier (densificada): error geométrico, no al punto de
+    igual parámetro (la Bézier no recorre la curva a la misma velocidad)."""
+    u = np.linspace(0, 1, 48)
+    b = (1 - u) ** 3 * p0 + 3 * (1 - u) ** 2 * u * p1 + 3 * (1 - u) * u ** 2 * p2 + u ** 3 * p3
+    B = np.column_stack([b.real, b.imag])
+    a_, ab = B[:-1], B[1:] - B[:-1]
+    t = np.clip(((S[:, None] - a_[None]) * ab[None]).sum(-1) / np.maximum((ab * ab).sum(-1), 1e-18), 0, 1)
+    return float(np.linalg.norm(S[:, None] - (a_[None] + t[..., None] * ab[None]), axis=-1).min(1).max())
+
+
+def bezier(loop, tol, min_segments=4):
+    """Bézier cerrado que pasa por un lazo suave con error <= tol, con los menos tramos que alcanzan.
+    La dirección de las asas sale de la derivada de la interpolación trigonométrica del lazo (cada
+    tramo es tangente a la curva en sus dos puntos); su largo, de la regla que mejor calza en ese
+    tramo. Devuelve (puntos, asa_izq, asa_der, error) como arrays (n, 2)."""
+    z = loop[:, 0] + 1j * loop[:, 1]
+    n = len(z)
+    c = np.fft.fft(z) / n
+    k = np.fft.fftfreq(n) * n
+    # derivada solo con las frecuencias bajas: las altas son el escalonado del muestreo y, multiplicadas
+    # por k, harían temblar las tangentes (también deja fuera a Nyquist, que no tiene pareja)
+    dz = np.fft.ifft(np.where(np.abs(k) <= n // 6, c, 0) * 2j * np.pi * k) * n   # dz/dt, t de 0 a 1
+    mejor = None
+    for segs in range(min_segments, n + 1):
+        idx = np.unique(np.round(np.linspace(0, n, segs + 1)).astype(int))
+        err = 0.0
+        pts, izq, der = [], [], []
+        for i0, i1 in zip(idx[:-1], idx[1:]):
+            dt = (i1 - i0) / n
+            p0, p3 = z[i0 % n], z[i1 % n]
+            t0, t1 = dz[i0 % n] / abs(dz[i0 % n]), dz[i1 % n] / abs(dz[i1 % n])
+            S = np.column_stack([z[np.arange(i0, i1 + 1) % n].real, z[np.arange(i0, i1 + 1) % n].imag])
+            # dos largos de asa y se queda el que mejor calza: el de Hermite (dt·|dz|/3), bueno en tramos en
+            # S, y el de un arco con esas tangentes (cuerda / 3cos²(φ/4)), bueno en tramos que solo giran
+            phi = abs(np.angle(t1 / t0))
+            L_arco = abs(p3 - p0) / (3 * np.cos(phi / 4) ** 2)
+            opciones = [(dz[i0 % n] * dt / 3, dz[i1 % n] * dt / 3), (t0 * L_arco, t1 * L_arco)]
+            e_tramo = None
+            for h0, h1 in opciones:
+                q1, q2 = p0 + h0, p3 - h1
+                e = _bezier_error(S, p0, q1, q2, p3)
+                if e_tramo is None or e < e_tramo:
+                    e_tramo, p1, p2 = e, q1, q2
+            err = max(err, e_tramo)
+            pts.append(p0)
+            der.append(p1)
+            izq.append(p2)                          # asa de entrada del punto siguiente
+        izq = [izq[-1]] + izq[:-1]
+        mejor = (pts, izq, der, err)
+        if err <= tol:
+            break
+    a = [np.column_stack([np.real(v), np.imag(v)]) for v in map(np.array, mejor[:3])]
+    return a[0], a[1], a[2], mejor[3]
 
 
 def rasterize(loops, shape, origin, scale):
