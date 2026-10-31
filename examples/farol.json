@@ -1,0 +1,349 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   960,
+   1280
+  ],
+  "fps": 30,
+  "frames": [
+   1,
+   150
+  ],
+  "world": {
+   "color": "#3a342b",
+   "strength": 0.8
+  }
+ },
+ "materials": [
+  {
+   "name": "Papel",
+   "color": "#cd342c",
+   "roughness": 0.8,
+   "emission": "#ff5a2a",
+   "emissionStrength": 0.25
+  },
+  {
+   "name": "Oro",
+   "color": "#c99b2f",
+   "metallic": 0.35,
+   "roughness": 0.35
+  },
+  {
+   "name": "OroOscuro",
+   "color": "#a87a1e",
+   "metallic": 0.35,
+   "roughness": 0.4
+  },
+  {
+   "name": "Borla",
+   "color": "#d63c32",
+   "roughness": 0.95
+  },
+  {
+   "name": "Alambre",
+   "color": "#443930",
+   "metallic": 0.6,
+   "roughness": 0.5
+  },
+  {
+   "name": "Estrella",
+   "color": "#f7cd3c",
+   "roughness": 0.4,
+   "emission": "#f7cd3c",
+   "emissionStrength": 0.4
+  },
+  {
+   "name": "Madera",
+   "color": "#6b4a2e",
+   "roughness": 0.7
+  }
+ ],
+ "collections": [
+  "Farol"
+ ],
+ "objects": [
+  {
+   "name": "Viga",
+   "type": "cylinder",
+   "radius": 0.025,
+   "depth": 1.4,
+   "rotation": [
+    0,
+    90,
+    0
+   ],
+   "location": [
+    0,
+    0,
+    1.53
+   ],
+   "material": "Madera"
+  },
+  {
+   "name": "Bisagra",
+   "type": "empty",
+   "location": [
+    0,
+    0,
+    1.5
+   ],
+   "size": 0.05,
+   "collection": "Farol"
+  },
+  {
+   "name": "Borla",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0,
+    0.1235
+   ],
+   "segments": 32,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "Borla",
+   "smooth": true,
+   "collection": "Farol",
+   "parent": "BisagraBorla"
+  },
+  {
+   "name": "TapaInf",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0.1235,
+    0.2187
+   ],
+   "segments": 48,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "Oro",
+   "smooth": true,
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "AroInf",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0.2187,
+    0.2337
+   ],
+   "segments": 48,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "OroOscuro",
+   "smooth": true,
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "Cuerpo",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0.2337,
+    0.7613
+   ],
+   "segments": 64,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "Papel",
+   "smooth": true,
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "TapaSup",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0.7613,
+    0.8197
+   ],
+   "segments": 48,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "Oro",
+   "smooth": true,
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "Alambre",
+   "type": "lathe",
+   "image": "farol/referencia.png",
+   "height": 0.9,
+   "range": [
+    0.8197,
+    1.0
+   ],
+   "segments": 12,
+   "location": [
+    0,
+    0,
+    0.6
+   ],
+   "material": "Alambre",
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "Estrella",
+   "type": "outline",
+   "image": "farol/referencia.png",
+   "color": "#f7cd3c",
+   "tolerance": 0.6,
+   "width": 0.128,
+   "plane": "XY",
+   "thickness": 0.003,
+   "location": [
+    0,
+    -0.25,
+    1.042
+   ],
+   "material": "Estrella",
+   "collection": "Farol",
+   "parent": "Bisagra",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "at": [
+     0,
+     0,
+     1.042
+    ],
+    "offset": 0.002,
+    "align": true,
+    "wrap": true
+   }
+  },
+  {
+   "name": "BisagraBorla",
+   "type": "empty",
+   "location": [
+    0,
+    0,
+    0.711
+   ],
+   "size": 0.03,
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "Luz",
+   "type": "light",
+   "light": "point",
+   "energy": 25,
+   "color": "#ffb36b",
+   "size": 0.05,
+   "location": [
+    0,
+    0,
+    1.05
+   ],
+   "collection": "Farol",
+   "parent": "Bisagra"
+  },
+  {
+   "name": "Ambiente",
+   "type": "light",
+   "light": "area",
+   "energy": 40,
+   "size": 2,
+   "location": [
+    -1.2,
+    -1.6,
+    1.8
+   ],
+   "lookAt": [
+    0,
+    0,
+    1.0
+   ]
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "frame": [
+    "Cuerpo",
+    "Borla",
+    "Alambre",
+    "TapaInf"
+   ],
+   "view": [
+    0.25,
+    -1,
+    0.12
+   ],
+   "margin": 1.5
+  }
+ ],
+ "animation": [
+  {
+   "object": "Bisagra",
+   "property": "rotation",
+   "axis": "y",
+   "motion": {
+    "kind": "pendulum",
+    "length": 0.5,
+    "initial": 12,
+    "damping": 0.25
+   }
+  },
+  {
+   "object": "BisagraBorla",
+   "property": "rotation",
+   "axis": "y",
+   "motion": {
+    "kind": "follow",
+    "leader": "Cuerpo",
+    "leaderAxis": "x",
+    "frequency": 1.6,
+    "dampingRatio": 0.2,
+    "gain": 2
+   }
+  },
+  {
+   "object": "Luz",
+   "property": "data.energy",
+   "motion": [
+    {
+     "kind": "noise",
+     "frequency": 1.5,
+     "amplitude": 7,
+     "seed": 3
+    },
+    {
+     "kind": "noise",
+     "frequency": 1.4,
+     "amplitude": 3,
+     "seed": 11
+    }
+   ]
+  }
+ ]
+}

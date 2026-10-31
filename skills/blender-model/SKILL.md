@@ -169,6 +169,11 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
 - **No es para** volúmenes: una sola silueta no da profundidad. Un personaje o un objeto redondo se
   modela con las primitivas; `outline` sirve para sus partes planas.
 - Para comparar una pieza con huecos contra su imagen usa `compare -Holes keep`.
+- **Una parte de un color** (la estrella amarilla pintada en un farol rojo, un logo sobre una remera):
+  `color: "#rrggbb"` toma lo que es de ese color en vez de separar la figura del fondo, con borde
+  subpíxel; `colorTolerance` (0.15) si el tono varía. Pide el hex al mirar la imagen o a `contour`.
+  Para pegarla a una superficie curva: plane XY + `attach` con `align` y `wrap` (funciona aunque la
+  pieza cuelgue de un padre animado).
 
 ### Torno desde una foto (`lathe` con `image`)
 Para objetos **de revolución** (jarrones, botellas, vasos, faroles, peones, columnas, lámparas): en vez
@@ -187,6 +192,13 @@ El resultado de `build` trae en `outlines` el `profile` medido (puedes copiarlo 
 - El perfil sale suave entre esquinas (64 puntos, `profileRings`) y con las esquinas exactas (el borde
   de la boca, la base). Probado con un jarrón con asa fotografiado: radio a 0.77 mm del real en 40 cm.
 - Es una superficie sin grosor (como `lathe`); para paredes, `modifiers: [{"type": "solidify"}]`.
+- **Objetos de varios colores** (un farol con tapas doradas y papel rojo, una botella con tapa y
+  etiqueta): `blender-cli contour -Image foto.png -Lathe` devuelve `bands`, las franjas de color a lo
+  largo del alto (`from`/`to` en fracción del alto desde abajo, `color` medido, `maxRadius`), y la vista
+  previa las marca en verde. Haz un `lathe` por franja con la misma imagen, `height` y `location` y
+  `range: [from, to]`: cada pieza sale con la misma escala y el mismo eje, encaja con las vecinas y
+  lleva su material con el color de la franja. El error y la asimetría se miden por franja.
+  `examples/farol.json` lo hace con 6 franjas, una estrella por color, péndulo y llama.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no
@@ -274,7 +286,9 @@ Al repetir `build`, los modificadores que ya no estén en el spec se quitan (sol
 Principled BSDF: `color`, `metallic`, `roughness`, `ior`, `alpha`, `transmission`, `emission` +
 `emissionStrength`, `coat`, `sheen`, `subsurface`, `specular`, `texture` (imagen como color base; ruta
 absoluta o relativa al spec). Colores en hex como en cualquier selector (`#rrggbb`); blender-cli los
-convierte al espacio lineal de Blender.
+convierte al espacio lineal de Blender. Un `metallic` de 0.8-1 sale casi negro si el mundo es oscuro y no
+hay nada que reflejar (el dorado se ve marrón): usa 0.3-0.5 o un HDRI (`asset`). Una `emission` fuerte
+aclara y lava el color base; para un objeto que brilla un poco, `emissionStrength` 0.2-0.4.
 
 ### Estilo retro de 32 bits (low-poly y pixel art)
 Para el look de los juegos 3D de consolas de 32 bits:
@@ -305,10 +319,13 @@ primera vez; repetir `build` no lo corre ni duplica claves). Los otros ejes y an
 | kind | Para qué | Parámetros |
 |---|---|---|
 | `oscillate` | Cinemático: alas, ventiladores, respirar, flotar, una señal que parpadea | `frequency` (Hz), `amplitude`, `phase` (grados), `offset` |
+| `noise` | Cinemático: variación suave y sin patrón (una llama, un motor, viento, un temblor) | `frequency` (Hz, sus componentes van de f/2 a 2f), `amplitude` (el máximo exacto), `seed` (otra semilla, otro ruido; la misma, el mismo), `offset` |
 | `spring` | Simulado: rebota y se asienta (un golpe, una caída, un *squash*) | `frequency` + `dampingRatio` (0 sin pérdida, 1 crítico), o `mass` + `stiffness` + `damping`; `initial`, `velocity`, `force` |
 | `pendulum` | Simulado: péndulo real, también con ángulos grandes | `length` (m), `initial` (grados), `velocity`, `damping`, `gravity` (9.81) |
 | `follow` | Simulado: movimiento secundario (antenas, orejas, colas, cables) que sigue a otro objeto con retraso y rebote | `leader` (objeto), `leaderAxis` (eje de su aceleración en el mundo), `frequency`, `dampingRatio` (0.3), `gain` (grados o m que se inclina por cada m/s² del guía) |
 
+- **Varios movimientos en un canal**: `motion` también acepta una lista y los suma (una llama:
+  dos `noise` de frecuencias distintas; un balanceo con temblor: `pendulum` + `noise`).
 - **Pivote**: la rotación es alrededor del origen del objeto. Para un ala, una antena o un péndulo crea
   un `empty` en la bisagra, emparenta la pieza (`parent`) y anima el empty (así lo hace
   `examples/libelula.json`).

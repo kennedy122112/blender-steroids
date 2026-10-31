@@ -2,6 +2,7 @@
 Movimiento con ecuaciones, sin bpy: devuelve un valor por fotograma que build hornea como claves.
 
   oscillate  cinemático: offset + amplitude·sin(2π·f·t + fase)            (alas, ventiladores, respirar)
+  noise      cinemático: ruido suave y repetible (seed) de amplitud máxima `amplitude`  (llamas, temblor)
   spring     ODE: m·x'' + c·x' + k·x = F, desde x0, v0                     (rebota y se asienta)
   pendulum   ODE: θ'' = -(g/L)·sin θ - b·θ'                                (péndulo real, ángulos grandes)
   follow     ODE: x'' + 2ζω·x' + ω²·x = -ω²·gain·a(t), a = aceleración de otro (antenas, orejas, colas);
@@ -15,7 +16,7 @@ import bisect
 import math
 import time
 
-KINDS = ('oscillate', 'spring', 'pendulum', 'follow')
+KINDS = ('oscillate', 'noise', 'spring', 'pendulum', 'follow')
 MAX_FRAMES = 20000
 MAX_SUBSTEPS = 2000000          # tope de pasos RK4 por movimiento (unos segundos de cálculo)
 PASOS_POR_CICLO = 40            # el paso se achica solo para dar al menos esto por ciclo natural
@@ -78,6 +79,8 @@ def natural_frequency(m):
     kind = m.get('kind')
     if kind == 'oscillate':
         return abs(_num(m, 'frequency', positive=True))
+    if kind == 'noise':
+        return 2 * _num(m, 'frequency', positive=True)        # su componente más rápida
     if kind in ('spring', 'follow'):
         if kind == 'follow':
             return _num(m, 'frequency', positive=True)
@@ -106,7 +109,7 @@ def simulate(m, times, leader_accel=None):
     # paso de integración: el pedido (o 1/480 s), achicado si el sistema oscila rápido: RK4 se vuelve
     # inestable con paso·ω > 2.8 y pierde precisión mucho antes
     paso = _num(m, 'step', 1 / 480, positive=True)
-    if kind != 'oscillate':
+    if kind not in ('oscillate', 'noise'):
         paso = min(paso, 1 / (PASOS_POR_CICLO * natural_frequency(m)))
         subpasos = int(math.ceil((times[-1] - times[0]) / paso))
         if subpasos > MAX_SUBSTEPS:
@@ -118,6 +121,18 @@ def simulate(m, times, leader_accel=None):
         fase = math.radians(_num(m, 'phase', 0.0))
         off = _num(m, 'offset', 0.0)
         vals = [off + A * math.sin(2 * math.pi * f * t + fase) for t in times]
+        modo = 'kinematic'
+    elif kind == 'noise':
+        # suma de senos con frecuencias entre f/2 y 2f y fases al azar (con semilla): suave, sin patrón
+        # visible y igual cada vez; se escala para que el máximo sea exactamente `amplitude`
+        import random
+        f = _num(m, 'frequency', positive=True)
+        A = _num(m, 'amplitude')
+        rnd = random.Random(int(m.get('seed', 1)))
+        comp = [(f * 2 ** rnd.uniform(-1, 1), rnd.uniform(0, 2 * math.pi), rnd.uniform(0.5, 1)) for _ in range(7)]
+        crudo = [sum(w * math.sin(2 * math.pi * fi * t + ph) for fi, ph, w in comp) for t in times]
+        tope = max(abs(v) for v in crudo) or 1.0
+        vals = [_num(m, 'offset', 0.0) + A * v / tope for v in crudo]
         modo = 'kinematic'
     elif kind == 'spring':
         masa, k, c = _spring_params(m)

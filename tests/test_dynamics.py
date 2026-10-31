@@ -103,6 +103,27 @@ class Modelos(unittest.TestCase):
 
 
 
+
+class Ruido(unittest.TestCase):
+    def test_amplitud_y_semilla(self):
+        t = tiempos(5, 30)
+        a, _ = D.simulate({'kind': 'noise', 'frequency': 1.5, 'amplitude': 7, 'seed': 3}, t)
+        b, _ = D.simulate({'kind': 'noise', 'frequency': 1.5, 'amplitude': 7, 'seed': 3}, t)
+        c, info = D.simulate({'kind': 'noise', 'frequency': 1.5, 'amplitude': 7, 'seed': 4}, t)
+        self.assertEqual(a, b)                                   # repetible
+        self.assertNotEqual(a, c)
+        self.assertAlmostEqual(max(abs(x) for x in a), 7, places=9)
+        self.assertEqual(info['mode'], 'kinematic')
+
+    def test_suave(self):
+        # ningún salto entre fotogramas mayor que lo que permite su componente más rápida (2f)
+        t = tiempos(5, 60)
+        v, _ = D.simulate({'kind': 'noise', 'frequency': 1, 'amplitude': 1}, t)
+        salto = max(abs(b - a) for a, b in zip(v, v[1:]))
+        self.assertLess(salto, 2 * math.pi * 2 * 1 / 60 * 1.5)
+        self.assertAlmostEqual(D.natural_frequency({'kind': 'noise', 'frequency': 1}), 2)
+
+
 class Robustez(unittest.TestCase):
     """Hallazgos de la auditoría BS-REVIEW-005 (R5, R6)."""
 
