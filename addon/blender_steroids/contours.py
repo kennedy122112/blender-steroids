@@ -21,7 +21,9 @@ FRACCION_ESQUINAS = 0.5      # si más de esta parte del giro total está en esq
 def coverage(rgba, threshold=None):
     """Cobertura 0..1 del sujeto. Con transparencia, el alfa; si no, la distancia al color de fondo (la
     mediana del borde) relativa a la del sujeto, para que el borde antialias dé la posición subpíxel.
-    `threshold` (0..1) fija a mano la distancia de color que separa sujeto y fondo."""
+    Esa distancia se mide contra el sujeto que el borde tiene al lado (máximo en 7x7 px): en una foto el
+    lado iluminado contrasta mucho menos con el fondo que el lado en sombra, y una escala única se come
+    el borde claro. `threshold` (0..1) fija a mano la distancia de color que separa sujeto y fondo."""
     rgba = np.asarray(rgba, np.float64)
     if rgba.shape[-1] == 4 and rgba[..., 3].min() < 0.5:
         return rgba[..., 3]
@@ -33,7 +35,17 @@ def coverage(rgba, threshold=None):
         return np.clip(d / (2 * float(threshold)), 0, 1)
     tinta = d[d > 0.25 * d.max()]
     escala = float(np.median(tinta)) if tinta.size else 1.0
-    return np.clip(d / max(escala, 1e-6), 0, 1)
+    global_ = np.clip(d / max(escala, 1e-6), 0, 1)
+    ruido = float(np.percentile(np.abs(borde - fondo).max(axis=-1), 95))
+    minimo = max(0.04, 3 * ruido)                    # contraste mínimo para contar como sujeto
+    h, w = d.shape
+    pad = np.pad(d, 3, mode='edge')
+    local = d.copy()
+    for dy in range(7):
+        for dx in range(7):
+            np.maximum(local, pad[dy:dy + h, dx:dx + w], out=local)
+    relativo = np.where(local > 2 * minimo, d / np.maximum(local, 1e-6), 0.0)
+    return np.maximum(global_, relativo)
 
 
 _TABLA = {1: [(3, 2)], 2: [(2, 1)], 3: [(3, 1)], 4: [(0, 1)], 5: [(3, 0), (2, 1)], 6: [(0, 2)],
@@ -352,6 +364,111 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
             'diagonal': round(diag, 4), 'tolerancePercent': float(tolerance), 'tolerance': tol,
             'targetMet': all(l['targetMet'] for l in lazos), 'loops': lazos}
     return salida, info
+
+
+def _cortes(pol, y):
+    """x donde el lazo cerrado cruza la horizontal y (ordenadas)."""
+    a, b = pol, np.roll(pol, -1, axis=0)
+    cruza = (a[:, 1] > y) != (b[:, 1] > y)
+    t = (y - a[cruza, 1]) / (b[cruza, 1] - a[cruza, 1])
+    return np.sort(a[cruza, 0] + t * (b[cruza, 0] - a[cruza, 0]))
+
+
+def _rdp_abierto(q, tol):
+    """Ramer-Douglas-Peucker de una polilínea abierta (conserva los extremos)."""
+    if len(q) < 3:
+        return q
+    a, ab = q[0], q[-1] - q[0]
+    L = np.linalg.norm(ab)
+    d = (np.abs(ab[0] * (q[:, 1] - a[1]) - ab[1] * (q[:, 0] - a[0])) / L) if L > 0 \
+        else np.linalg.norm(q - a, axis=1)
+    k = int(np.argmax(d))
+    if d[k] <= tol:
+        return np.array([q[0], q[-1]])
+    return np.vstack([_rdp_abierto(q[:k + 1], tol)[:-1], _rdp_abierto(q[k:], tol)])
+
+
+def lathe_profile(rgba, size=None, axis='height', tolerance=0.25, side='both', threshold=None, levels=600,
+                  rings=64):
+    """Perfil de torno [[radio, z], ...] (de abajo arriba, en metros, z desde 0) a partir de la silueta de
+    un objeto de revolución visto de lado (jarrón, botella, farol, peón).
+
+    El eje es la vertical que mejor centra la silueta (mediana de los centros de cada altura). `side`:
+    'both' promedia las dos mitades; 'left' o 'right' usa solo esa (cuando del otro lado hay un asa o un
+    pico que no es de revolución). size: medida en metros en `axis` ('height' o 'width'; si falta, 1 m de
+    alto). tolerance: % del alto. rings: puntos del perfil de salida (suave entre esquinas; 0 = solo los
+    vértices clave). Devuelve (perfil, info) con la asimetría medida: si las dos mitades
+    difieren mucho, la figura no es de revolución (o la foto no está de lado) y el aviso lo dice."""
+    if side not in ('both', 'left', 'right'):
+        raise ValueError('side debe ser both, left o right')
+    f = coverage(rgba, threshold)
+    h, w = f.shape
+    regs = regions(trace(f), min_area=0.0005 * h * w)
+    if not regs:
+        raise ValueError('No se encontró ninguna figura en la imagen (prueba con threshold)')
+    pol = max((r['outer'] for r in regs), key=lambda l: abs(area(l))) * [1, -1]      # y hacia arriba
+    y0, y1 = pol[:, 1].min(), pol[:, 1].max()
+    alto = y1 - y0
+    ys = np.linspace(y0, y1, int(levels))
+    ys[0] += 1e-6 * alto
+    ys[-1] -= 1e-6 * alto
+    filas = []
+    for y in ys:
+        xs = _cortes(pol, y)
+        if len(xs) >= 2:
+            filas.append((y, xs[0], xs[-1]))
+    filas = np.array(filas)
+    eje = float(np.median((filas[:, 1] + filas[:, 2]) / 2))
+    izq, der = eje - filas[:, 1], filas[:, 2] - eje
+    ancho = float(2 * max(izq.max(), der.max()))
+    k = float(size) / (alto if axis == 'height' else ancho) if size else 1.0 / alto
+    r = {'both': (izq + der) / 2, 'left': izq, 'right': der}[side]
+    perfil = np.column_stack([np.clip(r, 0, None) * k, (filas[:, 0] - y0) * k])
+    tol = float(tolerance) / 100 * alto * k
+    simple = _rdp_abierto(perfil, tol)
+    salida = _suave(perfil, simple, int(rings)) if rings else simple
+    asim = float(np.abs(izq - der).max() * k)
+    err = _desvio(perfil, salida)
+    info = {'height': round(float(alto * k), 4), 'maxRadius': round(float(perfil[:, 0].max()), 4),
+            'points': int(len(salida)), 'keyPoints': int(len(simple)), 'side': side,
+            'tolerancePercent': float(tolerance),
+            'maxErrorPercent': round(float(100 * err / (alto * k)), 3), 'targetMet': bool(err <= tol + 1e-12),
+            'asymmetryPercent': round(float(100 * asim / (alto * k)), 2)}
+    return salida, info
+
+
+def _desvio(medido, poli):
+    """Distancia máxima de los puntos medidos a la polilínea (perpendicular, así vale también en hombros
+    casi horizontales)."""
+    a, b = poli[:-1], poli[1:]
+    ab = b - a
+    t = np.clip(((medido[:, None] - a[None]) * ab[None]).sum(-1) / np.maximum((ab * ab).sum(-1), 1e-18), 0, 1)
+    return float(np.linalg.norm(medido[:, None] - (a[None] + t[..., None] * ab[None]), axis=-1).min(1).max())
+
+
+def _suave(perfil, simple, rings):
+    """Un perfil con pocos puntos se ve facetado al girarlo (anillos de luz). Entre esquina y esquina
+    (vértices de `simple` que giran más de 35°) toma el perfil medido, lo suaviza un poco y lo
+    remuestrea a unos `rings` puntos en total; las esquinas quedan exactas (borde de una boca, base)."""
+    d = np.diff(simple, axis=0)
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    giro = np.degrees(np.abs(np.angle(np.exp(1j * np.diff(ang)))))
+    claves = [0] + [i + 1 for i in np.nonzero(giro > 35)[0]] + [len(simple) - 1]
+    idx = [int(np.argmin(np.linalg.norm(perfil - simple[i], axis=1))) for i in claves]
+    total = np.linalg.norm(np.diff(perfil, axis=0), axis=1).sum()
+    partes = []
+    for i0, i1 in zip(idx, idx[1:]):
+        tramo = perfil[i0:i1 + 1].copy()
+        if len(tramo) > 6:                          # media móvil de 5, con los extremos fijos
+            for c in (0, 1):
+                tramo[2:-2, c] = np.convolve(tramo[:, c], np.ones(5) / 5, mode='valid')
+        largo = np.linalg.norm(np.diff(tramo, axis=0), axis=1)
+        s = np.concatenate([[0], np.cumsum(largo)])
+        n = max(2, int(round(rings * s[-1] / max(total, 1e-12))) + 1)
+        t = np.linspace(0, s[-1], n)
+        pts = np.column_stack([np.interp(t, s, tramo[:, 0]), np.interp(t, s, tramo[:, 1])])
+        partes.append(pts if not partes else pts[1:])
+    return np.vstack(partes)
 
 
 def rasterize(loops, shape, origin, scale):

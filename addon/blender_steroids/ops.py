@@ -247,7 +247,7 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
-             'plane')
+             'plane', 'side', 'profileRings')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
@@ -357,9 +357,27 @@ def _tube(bm, o):
                 bm.faces.new((c, ring[j], ring[(j + 1) % seg]))
 
 
-def _lathe(bm, o):
+def _lathe(bm, o, name=None):
     """Perfil girado alrededor de Z: `profile` = [[radio, z], ...] de abajo arriba (jarrones, troncos,
-    botellas, peones, lámparas). Un radio 0 cierra en un punto."""
+    botellas, peones, lámparas). Un radio 0 cierra en un punto. O `image`: la silueta del objeto visto
+    de lado, de la que se mide el perfil (`height` o `width` en metros, `tolerance` % del alto, `side`
+    both/left/right si de un lado hay un asa, `threshold`); las medidas van a `outlines` de build."""
+    if o.get('image'):
+        from . import contours
+        ruta = _path(o['image'], _BUILD['baseDir'])
+        px = _load_pixels(ruta)
+        if px.shape[0] > 1024:
+            px = _load_pixels(ruta, 1024)
+        size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
+        perfil, info = contours.lathe_profile(px[::-1], size=size, axis=axis,
+                                              tolerance=float(o.get('tolerance', 0.25)),
+                                              side=o.get('side', 'both'), threshold=o.get('threshold'),
+                                              rings=int(o.get('profileRings', 64)))
+        info['profile'] = [[round(float(r), 4), round(float(z), 4)] for r, z in perfil]
+        _BUILD['outlines'][name] = info
+        o = dict(o, profile=info['profile'])
+    elif not o.get('profile'):
+        raise ValueError('lathe necesita profile [[radio, z], ...] o image (la silueta vista de lado)')
     prof = [(float(r), float(z)) for r, z in o['profile']]
     seg = int(o.get('segments', 48))
     rings = []
@@ -574,7 +592,7 @@ def build_mesh(o, name):
     elif t == 'tube':
         _tube(bm, o)
     elif t == 'lathe':
-        _lathe(bm, o)
+        _lathe(bm, o, name)
     elif t == 'superellipsoid':
         _superellipsoid(bm, o)
     elif t == 'membrane':
@@ -1349,6 +1367,10 @@ def op_build(spec):
             if not inf['targetMet']:
                 warnings.append('«%s»: algún contorno no llegó a la tolerancia de %s %% (mira outlines)'
                                 % (n, inf['tolerancePercent']))
+            if inf.get('side') == 'both' and inf.get('asymmetryPercent', 0) > 3:
+                warnings.append('«%s»: las dos mitades de la silueta difieren %s %% del alto; si de un lado '
+                                'hay un asa o un pico usa side left/right, o la foto no está de lado'
+                                % (n, inf['asymmetryPercent']))
     if removed:
         res['removed'] = removed
     if warnings:
