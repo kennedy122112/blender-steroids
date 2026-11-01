@@ -186,7 +186,27 @@ e = (r.get('result') or {}).get('estrella') or [9, 9, 9]
 check('farol: estrella al frente del cuerpo (attach con padre)', abs(e[0]) < 0.01 and -0.26 < e[1] < -0.2
       and abs(e[2] - 1.042) < 0.01, e)
 
-# 7. una entrada inválida no estropea el archivo
+# 7. regadera: cuerpo desde dos vistas (sin el pico ni el asa), asa y pico como trazos que se meten en el
+#    cuerpo, y la comparación ortográfica con las dos vistas (con -Objects el piso no cuenta)
+r = cli('build', '--file', ruta('regadera.blend'), '--spec', os.path.join(REPO, 'examples', 'regadera.json'))
+check('build regadera sin avisos', r.get('ok') and not r.get('warnings'), r.get('error') or r.get('warnings'))
+o = r.get('outlines') or {}
+c = o.get('Cuerpo') or {}
+check('regadera: el cuerpo mide como el dibujo', c.get('targetMet') and all(
+    abs(a_ - b_) < 0.002 for a_, b_ in zip(c.get('size') or [0, 0, 0], (0.1875, 0.1252, 0.2201))), c)
+asa = [t for t in (o.get('Asa') or {}).get('strokes', []) if t['index'] == 0]
+check('regadera: el asa entra al cuerpo por las dos puntas',
+      asa and sorted(asa[0]['attached']) == ['end', 'start'] and asa[0]['iou'] > 0.95, asa)
+pico = [t for t in (o.get('Pico') or {}).get('strokes', []) if t['index'] == 1]
+check('regadera: el pico sale en la dirección del dibujo', pico and pico[0]['iou'] > 0.95
+      and pico[0]['startDirection'][0] * 0.6727 + pico[0]['startDirection'][1] * 0.7399 > 0.99, pico)
+r = cli('compare', '--file', ruta('regadera.blend'), '--reference', os.path.join(REPO, 'examples', 'regadera', 'frente.png'),
+        '--view', 'front', '--reference', os.path.join(REPO, 'examples', 'regadera', 'lado.png'), '--view', 'right',
+        '--objects', 'Cuerpo,Asa,Pico,Flor', '--ortho', '--engine', 'workbench', '--path', ruta('regadera_cmp.png'))
+ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
+check('regadera: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
+
+# 8. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],

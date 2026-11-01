@@ -438,7 +438,7 @@ def cmd_exec(a):
 def cmd_render(a):
     args = {'path': os.path.abspath(a.path), 'preview': a.preview, 'view': a.view, 'engine': a.engine,
             'samples': a.samples, 'percentage': a.percentage, 'camera': a.camera, 'frame': a.frame,
-            'animation': a.animation}
+            'animation': a.animation, 'ortho': a.ortho}
     if a.view and ',' in a.view:   # dirección propia: "0.9,-0.6,0.2"
         args['view'] = [float(x) for x in a.view.strip('[]').split(',')]
     if a.retro:
@@ -483,7 +483,7 @@ def cmd_compare(a):
         fail('No existe la referencia %s' % ref)
     view = vistas[0] if vistas else None
     args = {'reference': ref, 'path': os.path.abspath(a.path), 'preview': a.preview, 'view': _vista(view),
-            'engine': a.engine, 'samples': a.samples, 'camera': a.camera, 'frame': a.frame}
+            'engine': a.engine, 'samples': a.samples, 'camera': a.camera, 'frame': a.frame, 'ortho': a.ortho}
     if a.objects:
         args['objects'] = [x.strip() for x in a.objects.split(',')]
     args = {k: v for k, v in args.items() if v not in (None, False)}
@@ -670,7 +670,8 @@ def cmd_contour(a):
             'threshold': a.threshold, 'height': a.height, 'width': a.width, 'lathe': a.lathe,
             'coefficients': a.coefficients, 'preview': os.path.abspath(a.preview) if a.preview else None,
             'color': a.color, 'colorTolerance': a.color_tolerance,
-            'range': [float(x) for x in a.range.strip('[]').split(',')] if a.range else None}
+            'range': [float(x) for x in a.range.strip('[]').split(',')] if a.range else None,
+            'strokes': a.strokes, 'thin': a.thin}
     args = {k: v for k, v in args.items() if v not in (None, False)}
     # no toca ninguna escena: siempre en un Blender sin interfaz, sin bloquear el abierto
     return headless('contour', args)
@@ -864,6 +865,7 @@ def main(argv):
     sp.add_argument('--frames')
     sp.add_argument('--objects')
     sp.add_argument('--transparent', action='store_true')
+    sp.add_argument('--ortho', action='store_true', help='cámara ortográfica (sin perspectiva), justo de frente en las vistas con nombre')
     sp = p('export')
     sp.add_argument('--path', required=True)
     sp.add_argument('--objects')
@@ -882,6 +884,7 @@ def main(argv):
     sp.add_argument('--no-overlay', '--nooverlay', dest='no_overlay', action='store_true')
     sp.add_argument('--fit-view', '--fitview', dest='fit_view', action='store_true')
     sp.add_argument('--holes', choices=['fill', 'keep'], help='huecos cerrados: fill (tapar, por defecto) o keep')
+    sp.add_argument('--ortho', action='store_true', help='cámara ortográfica: para comparar con vistas dibujadas o planos')
     sp = p('import')
     sp.add_argument('--path', required=True)
     sp.add_argument('--name')
@@ -927,6 +930,8 @@ def main(argv):
     sp.add_argument('--color', help='#rrggbb: el sujeto es lo de ese color (no lo que se separa del fondo)')
     sp.add_argument('--color-tolerance', '--colortolerance', dest='color_tolerance', type=float)
     sp.add_argument('--range', help='lathe: desde,hasta en fracción del alto (0 = abajo)')
+    sp.add_argument('--strokes', action='store_true', help='partes finas (asas, picos, alambres) como trazos para stroke')
+    sp.add_argument('--thin', type=float, help='strokes: ancho máximo de una parte fina, en %% del alto (10)')
     sp.add_argument('--preview')
     sp = p('check')
     sp.add_argument('--objects')

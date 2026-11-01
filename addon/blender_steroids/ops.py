@@ -247,11 +247,12 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
-             'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance')
+             'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance', 'front', 'top',
+             'thin', 'view', 'pick')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
-              'outline'}
+              'outline', 'views', 'stroke'}
 
 # build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
 # lathe con imagen, y su fuente para guardarla en el objeto
@@ -402,6 +403,83 @@ def _lathe(bm, o, name=None):
                 bm.faces.new(ring)
 
 
+def _views(bm, o, name):
+    """Cuerpo desde dos vistas del objeto (`front`: de frente, X a la derecha; `side`: la vista derecha,
+    Y a la derecha), sin sus partes finas (asas, picos, alambres: se hacen con `stroke`). En cada altura
+    la sección es una elipse (`roundness` 2; más = más cuadrada) o la forma de la vista de arriba (`top`,
+    imagen), inscrita en lo que miden las dos vistas a esa altura, así el cuerpo calza con las dos
+    siluetas. `height`: alto de la silueta entera en metros (con asas; las dos imágenes lo comparten);
+    `thin`: ancho máximo en % del alto de lo que cuenta como parte fina (10). El origen queda abajo, en el
+    centro del cuerpo; las medidas van a `outlines` de build."""
+    from . import contours
+    if not (o.get('front') and o.get('side')):
+        raise ValueError('views necesita front y side: dos imágenes del objeto (de frente y de costado)')
+    fr, ruta_f = _image_px(o, 'front')
+    sd, ruta_s = _image_px(o, 'side')
+    niveles, info = contours.views_body(fr, sd, float(o.get('height', 1.0)), thin=float(o.get('thin', 10)),
+                                        tolerance=float(o.get('tolerance', 0.25)), rings=int(o.get('rings', 64)),
+                                        threshold=o.get('threshold'))
+    top, ruta_t = (_image_px(o, 'top') if o.get('top') else (None, None))
+    forma = contours.section_shape(int(o.get('segments', 48)), float(o.get('roundness', 2.0)), top,
+                                   o.get('threshold'))
+    anillos = []
+    for z, x0, x1, y0, y1 in niveles:
+        cx, a, cy, b = (x0 + x1) / 2, (x1 - x0) / 2, (y0 + y1) / 2, (y1 - y0) / 2
+        anillos.append([bm.verts.new((cx + a * u, cy + b * v, z)) for u, v in forma])
+    n = len(forma)
+    for r0, r1 in zip(anillos, anillos[1:]):
+        for j in range(n):
+            bm.faces.new((r0[j], r0[(j + 1) % n], r1[(j + 1) % n], r1[j]))
+    if o.get('cap', True):
+        bm.faces.new(anillos[0][::-1])
+        bm.faces.new(anillos[-1])
+    _record(name, o, info, None, [('front', ruta_f), ('side', ruta_s), ('top', ruta_t)])
+
+
+def _stroke(bm, o, name):
+    """Tubos desde las partes finas de una vista (asas, picos, alambres, antenas, ramas, patas): de la
+    imagen (`image`, la vista donde el trazo se ve a lo largo; `view` front o side) se mide el eje de
+    cada parte fina y su ancho en cada punto, y se hace un tubo que lo sigue y se mete en el cuerpo
+    donde lo toca. Con la misma imagen, `height` y `location` que el `views` del cuerpo, encaja con él.
+    `pick` [i, ...] elige trazos (del más largo al más corto; sin pick, todos); `color` toma solo los
+    de ese color; `flat` < 1 aplana la sección de canto (un asa de chapa: 0.4)."""
+    from . import contours
+    px, ruta = _image_px(o)
+    trazos, info = contours.strokes(px, height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)),
+                                    threshold=o.get('threshold'), color=o.get('color'),
+                                    color_tol=float(o.get('colorTolerance', 0.15)))
+    if not trazos:
+        raise ValueError('stroke: no hay partes finas en la imagen (sube thin, ahora %s %% del alto, o revisa '
+                         'color)' % o.get('thin', 10))
+    pick = o.get('pick')
+    idx = list(range(len(trazos))) if pick is None else [int(i) for i in (pick if isinstance(pick, list) else [pick])]
+    if any(not 0 <= i < len(trazos) for i in idx):
+        raise ValueError('pick fuera de rango: hay %d trazos (0..%d)' % (len(trazos), len(trazos) - 1))
+    lado = str(o.get('view', 'front')).lower()
+    if lado not in ('front', 'side'):
+        raise ValueError('view debe ser front o side')
+    flat = float(o.get('flat', 1.0))
+    for i in idx:
+        t = trazos[i]
+        pts = [(x, 0.0, z) if lado == 'front' else (0.0, x, z) for x, z in t['points']]
+        antes = set(bm.verts)
+        _tube(bm, {'points': pts, 'radii': t['radii'], 'segments': int(o.get('segments', 16))})
+        if flat != 1.0:
+            for v in bm.verts:
+                if v not in antes:
+                    if lado == 'front':
+                        v.co.y *= flat
+                    else:
+                        v.co.x *= flat
+    resumen = [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i)
+               for i, t in enumerate(trazos)]
+    _record(name, o, {'strokes': resumen, 'picked': idx, 'thinPercent': info['thinPercent'],
+                      'targetMet': all(trazos[i]['iou'] >= 0.85 for i in idx), 'tolerancePercent': None,
+                      'elapsedMs': info['elapsedMs']}, ruta)
+    _BUILD['sources'][name]['result']['strokes'] = [dict(r, points=t['points'], radii=t['radii'])
+                                                    for r, t in zip(resumen, trazos)]
+
+
 def _superellipsoid(bm, o):
     """Caja redondeada / esfera / almohada: `size` [x, y, z] total y `roundness` [lados, arriba-abajo]
     entre 0 (caja) y 1 (elipsoide); >1 la vuelve más puntiaguda. Cabezas y cuerpos de vinilo, cojines, rocas."""
@@ -507,9 +585,9 @@ def _membrane(bm, o):
             _tube(bm, {'points': [list(p) for p in pts], 'radii': [r0, r1], 'segments': 12})
 
 
-def _image_px(o):
-    """Imagen de outline/lathe (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
-    ruta = _path(o['image'], _BUILD['baseDir'])
+def _image_px(o, clave='image'):
+    """Imagen de outline/lathe/views/stroke (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
+    ruta = _path(o[clave], _BUILD['baseDir'])
     px = _load_pixels(ruta)
     if px.shape[0] > 1024:
         px = _load_pixels(ruta, 1024)
@@ -527,7 +605,7 @@ def _public(info):
     return pub
 
 
-def _record(name, o, info, ruta=None):
+def _record(name, o, info, ruta=None, otras=()):
     """Guarda las medidas para el resultado de build y la fuente completa para el objeto (bs_source):
     con qué se generó (parámetros, imagen y su sha1, versión) y qué salió (con los coeficientes de
     Fourier de cada contorno), para poder reproducirlo o explicarlo después."""
@@ -540,11 +618,13 @@ def _record(name, o, info, ruta=None):
         res['loops'] = [dict(l, **({'coefficients': c['_coef']} if '_coef' in c else {}))
                         for l, c in zip(pub['loops'], info['loops'])]
     fuente = {'generator': o.get('type'), 'version': VERSION,
-              'params': {k: o[k] for k in GEOM_KEYS if k in o and k not in ('image', 'profile')},
+              'params': {k: o[k] for k in GEOM_KEYS if k in o and k not in ('image', 'profile')
+                         and not (o.get('type') == 'views' and k in ('front', 'side', 'top'))},
               'result': res}
-    if ruta:
-        with open(ruta, 'rb') as f:
-            fuente['image'] = {'path': ruta, 'sha1': hashlib.sha1(f.read()).hexdigest()}
+    for clave, r in [('image', ruta)] + list(otras):
+        if r:
+            with open(r, 'rb') as f:
+                fuente[clave] = {'path': r, 'sha1': hashlib.sha1(f.read()).hexdigest()}
     _BUILD['sources'][name] = fuente
 
 
@@ -751,6 +831,10 @@ def build_mesh(o, name):
         _membrane(bm, o)
     elif t == 'outline':
         _outline(bm, o, name)
+    elif t == 'views':
+        _views(bm, o, name)
+    elif t == 'stroke':
+        _stroke(bm, o, name)
     elif t == 'blobby':
         bm.free()
         me = _blobby(o, name)
@@ -779,7 +863,7 @@ def build_mesh(o, name):
     if o.get('origin') == 'bottom' and bm.verts:
         zmin = min(v.co.z for v in bm.verts)
         bmesh.ops.translate(bm, vec=(0, 0, -zmin), verts=bm.verts)
-    if t in ('tube', 'lathe', 'superellipsoid', 'membrane'):
+    if t in ('tube', 'lathe', 'superellipsoid', 'membrane', 'views', 'stroke'):
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.normal_update()
@@ -1650,9 +1734,18 @@ def op_build(spec):
     if _BUILD['outlines']:
         res['outlines'] = _BUILD['outlines']
         for n, inf in _BUILD['outlines'].items():
-            if not inf['targetMet']:
+            if 'strokes' in inf:
+                for t in inf['strokes']:
+                    if t['index'] in inf['picked'] and t['iou'] < 0.85:
+                        warnings.append('«%s»: el trazo %d calza poco con la imagen (IoU %s): ¿es una parte fina? '
+                                        'Mira outlines y la vista previa de contour -Strokes' % (n, t['index'], t['iou']))
+            elif not inf['targetMet']:
                 warnings.append('«%s»: algún contorno no llegó a la tolerancia de %s %% (mira outlines)'
                                 % (n, inf['tolerancePercent']))
+            if inf.get('viewsMismatchPercent', 0) > 2:
+                warnings.append('«%s»: el cuerpo no mide lo mismo de alto en las dos vistas (%s %% del alto): '
+                                '¿son del mismo objeto, a la misma escala y con el mismo height?'
+                                % (n, inf['viewsMismatchPercent']))
             if inf.get('side') == 'both' and inf.get('asymmetryPercent', 0) > 3:
                 warnings.append('«%s»: las dos mitades de la silueta difieren %s %% del alto; si de un lado '
                                 'hay un asa o un pico usa side left/right, o la foto no está de lado'
@@ -1762,7 +1855,14 @@ def op_render(args):
         cam = bpy.data.objects.new('bs_vista', bpy.data.cameras.new('bs_vista'))
         s.collection.objects.link(cam)
         bpy.context.view_layer.update()
-        frame_camera(cam, args.get('objects'), args.get('view') or 'iso')
+        vista = args.get('view') or 'iso'
+        if args.get('ortho'):
+            # ortográfica, como un plano o una vista de frente/costado dibujada: sin perspectiva y, en las
+            # vistas con nombre, justo de frente (sin la leve elevación que se usa para ver el piso)
+            cam.data.type = 'ORTHO'
+            if isinstance(vista, str) and vista in ('front', 'back', 'right', 'left'):
+                vista = [VIEWS[vista][0], VIEWS[vista][1], 0.0]
+        frame_camera(cam, args.get('objects'), vista)
         s.camera = cam
     if args.get('frame') is not None:
         s.frame_set(int(args['frame']))
@@ -2169,12 +2269,25 @@ def op_compare(args):
     out = os.path.abspath(args['path'])
     tmp = os.path.splitext(out)[0] + '_render.png'
     fit = None
-    if args.get('fitView'):
-        fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400),
-                                            args.get('holes', 'fill')))
-        args = dict(args, view=fit['view'])
-    # transparente: así la figura del render se separa del fondo sin adivinar
-    r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
+    # con `objects` solo esas piezas cuentan como figura: lo demás (un piso, una mesa, el fondo) se oculta
+    # mientras se renderiza, si no su silueta se suma a la del objeto
+    ocultos = []
+    if args.get('objects'):
+        quedan = {_obj(n).name for n in args['objects']}
+        for o in s.objects:
+            if o.type in ('MESH', 'FONT', 'CURVE', 'SURFACE', 'META') and o.name not in quedan and not o.hide_render:
+                o.hide_render = True
+                ocultos.append(o)
+    try:
+        if args.get('fitView'):
+            fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400),
+                                                args.get('holes', 'fill')))
+            args = dict(args, view=fit['view'])
+        # transparente: así la figura del render se separa del fondo sin adivinar
+        r = op_render(dict(args, path=tmp, percentage=100, transparent=True))
+    finally:
+        for o in ocultos:
+            o.hide_render = False
     zg, bordes = _z_by_guide(tmp, args.get('objects'))
     c = op_compose({'reference': os.path.abspath(args['reference']), 'render': tmp, 'path': out,
                     'height': int(args.get('height', 800)), 'guides': args.get('guides', True),
@@ -2844,13 +2957,64 @@ def _draw_polyline(img, pts, color, closed=True, width=1):
                 img[ys, xs, :3] = color
 
 
+_COLORES_TRAZO = [(1, 0.85, 0), (1, 0.2, 0.75), (0.2, 0.9, 0.2), (1, 0.45, 0), (0.6, 0.4, 1), (1, 1, 1)]
+
+
+def _contour_strokes(args):
+    """contour con strokes: las partes finas de una vista como trazos (eje, ancho, si tocan el cuerpo)."""
+    import numpy as np
+    from . import contours
+    _BUILD['baseDir'] = None
+    px, ruta = _image_px(args)
+    trazos, info = contours.strokes(px, height=args.get('height'), thin=float(args.get('thin', 10)),
+                                    threshold=args.get('threshold'), color=args.get('color'),
+                                    color_tol=float(args.get('colorTolerance', 0.15)))
+    nombres = ['amarillo', 'magenta', 'verde', 'naranja', 'violeta', 'blanco']
+    res = {'strokes': [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i,
+                            previewColor=nombres[i % len(nombres)]) for i, t in enumerate(trazos)],
+           'thinPercent': info['thinPercent'], 'elapsedMs': info['elapsedMs'],
+           'image': {'path': ruta, 'size': [int(px.shape[1]), int(px.shape[0])]}}
+    if args.get('preview'):
+        img = px.copy()
+        img[..., :3] = img[..., :3] * 0.55 + 0.4
+        img[..., 3] = 1
+        fr = info['_frame']
+        _draw_polyline(img, info['_body'], (0, 0.8, 1), True, 2)
+        for i, t in enumerate(trazos):
+            p = np.array(t['points'])
+            q = np.column_stack([p[:, 0] / fr['k'] + fr['x0'], fr['abajo'] - p[:, 1] / fr['k']])
+            col = _COLORES_TRAZO[i % len(_COLORES_TRAZO)]
+            _draw_polyline(img, q, col, False, 2)
+            tg = np.gradient(q, axis=0)
+            tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
+            nrm = np.column_stack([-tg[:, 1], tg[:, 0]]) * (np.array(t['radii']) / fr['k'])[:, None]
+            _draw_polyline(img, q + nrm, col, False)
+            _draw_polyline(img, q - nrm, col, False)
+        out = os.path.abspath(args['preview'])
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        im = bpy.data.images.new('bs_contour', img.shape[1], img.shape[0], alpha=False)
+        try:
+            im.pixels.foreach_set(np.ascontiguousarray(img[::-1], dtype=np.float32).ravel())
+            im.filepath_raw = out
+            im.file_format = 'PNG'
+            im.save()
+        finally:
+            bpy.data.images.remove(im)
+        res['preview'] = out
+    return res
+
+
 def op_contour(args):
     """Analiza una imagen sin construir nada: qué contornos tiene, qué método y orden elige cada uno y
     con qué error (outline), o qué perfil de torno sale (lathe: true). Con `preview` dibuja el
     resultado sobre la imagen: cian = Fourier, magenta = polígono (con sus vértices en amarillo),
-    para lathe el eje en amarillo y el perfil en cian a los dos lados."""
+    para lathe el eje en amarillo y el perfil en cian a los dos lados. Con strokes: true, las partes finas
+    (asas, picos, alambres) que haría `stroke`, en orden y con su color en la vista previa, y el cuerpo
+    que haría `views` (en cian)."""
     import numpy as np
     from . import contours
+    if args.get('strokes'):
+        return _contour_strokes(args)
     o = dict(args, type='lathe' if args.get('lathe') else 'outline')
     _BUILD['baseDir'] = None
     px, ruta = _image_px(o)

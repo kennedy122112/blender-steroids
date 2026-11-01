@@ -22,6 +22,7 @@ en segundo plano: **el Blender del usuario no se congela** y su archivo no cambi
 | `-Samples N` | Calidad: EEVEE 32-64 bastan; Cycles 128-512 (más = menos ruido, más tiempo) |
 | `-Resolution 1920x1080`, `-Percentage 50` | Tamaño de la imagen |
 | `-Camera nombre`, `-Frame N`, `-Transparent` | Otra cámara, otro fotograma, fondo transparente (PNG) |
+| `-Ortho` | Con `-View`: cámara ortográfica (sin perspectiva), justo de frente en `front`/`back`/`right`/`left`. Para comparar con planos y vistas dibujadas |
 
 **Look retro de 32 bits**: `-Retro [-RetroWidth 320] [-RetroScale 4]` renderiza chico (320 de ancho,
 con el formato de la escena), pasa el color a 15 bits (5 por canal) con tramado ordenado y amplía x4
@@ -33,7 +34,7 @@ enseñarla: si algo se ve mal, corrígelo con `blender-model` y vuelve a renderi
 Avisa el tiempo antes de un render largo (Cycles a 1080p con 256 muestras puede tardar minutos).
 
 ## Comparar con una referencia
-`blender-cli compare -Reference ref.png -Path comparar.png [-View front|...] [-Objects a,b] [-Camera n] [-Preview]`
+`blender-cli compare -Reference ref.png -Path comparar.png [-View front|...] [-Objects a,b] [-Ortho] [-Camera n] [-Preview]`
 renderiza con fondo transparente y el formato de la referencia, detecta la figura en las dos imágenes
 (en la referencia la separa del fondo, también de un visor con degradado y cuadrícula) y **alinea** el
 render: misma altura de figura, centrado y apoyado en la misma base. Entrega una imagen con tres
@@ -58,6 +59,11 @@ imagen (hacia dónde apunta el hocico, qué brazo se ve más).
 **Varias vistas**: repite `-Reference` y `-View` en orden (`-Reference a.png -Reference perfil.png -View
 "0.4,-1,0.2" -View right`). Hace una comparación por vista (`comparar_1.png`, `comparar_2.png`) y
 devuelve `views` con el IoU de cada una y `meanIoU`.
+
+**Solo unas piezas**: con `-Objects` solo esas cuentan como figura: las demás mallas (un piso, una mesa,
+el fondo) se ocultan mientras se renderiza. **Vistas dibujadas o planos**: agrega `-Ortho`; en
+perspectiva la base y la boca de un objeto se ven desde arriba y el IoU baja aunque el modelo esté bien
+(la regadera del ejemplo: 0.91 en perspectiva, 0.99 en ortográfica).
 
 `-NoAlign` (sin alinear), `-NoOverlay` (sin panel de siluetas), `-NoGuides`. Úsalo en cada vuelta de un
 trabajo con referencia (ver `blender-model`) y describe las diferencias con estas medidas, no de memoria.

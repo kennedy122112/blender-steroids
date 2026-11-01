@@ -39,7 +39,9 @@ lejos si no lees la referencia antes. Ve en este orden.
 3. **Detalles** de lo grande a lo pequeño: accesorios, después la cara (calcomanías con `attach`,
    líneas con `onSurface`), al final materiales finos y luz. Las piezas planas de forma libre que se
    ven de frente (placas, emblemas, llamas, aletas, alas planas, orejas recortadas) no las armes a ojo
-   con `mesh`: recorta su silueta de la referencia y constrúyelas con `outline` (abajo).
+   con `mesh`: recorta su silueta de la referencia y constrúyelas con `outline` (abajo). Si tienes el
+   objeto **de frente y de costado** (un plano, dos fotos, una hoja de vistas), el cuerpo sale de las dos
+   con `views` y las asas, picos y alambres con `stroke` (abajo), sin medir nada a ojo.
 4. **Compara de verdad**, no de memoria: `blender-cli compare -Reference ref.png -Path comparar.png
    [-View front]` renderiza con el formato de la referencia y pone las dos imágenes lado a lado con
    guías horizontales cada 10 % del alto. Léela y anota diferencias concretas («la cabeza llega a la
@@ -115,6 +117,8 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `superellipsoid` | `size: [x, y, z]` total, `roundness`: número o `[lados, arriba-abajo]`, 0 = caja, 1 = elipsoide, >1 puntiaguda. Cabezas y cuerpos de vinilo, cojines, piedras, jabones |
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
+| `views` | Cuerpo desde dos vistas: `front` (imagen de frente, X a la derecha) y `side` (vista derecha, Y a la derecha), `height` (alto de la silueta entera, en metros), `roundness` (2 = sección elíptica; más = más cuadrada) o `top` (imagen de la vista de arriba para la forma de la sección), `thin` (10), `segments`, `rings`. Regaderas, ratones, zapatos, autos de juguete, cuerpos de pájaro. Ver «Volumen desde dos vistas» |
+| `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, `flat` (aplana de canto), `segments`. Ver «Volumen desde dos vistas» |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
 | `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla. Ver «Siluetas» |
@@ -166,8 +170,9 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
 - `tolerance` 0.25 % va bien a 1024 px; con imágenes chicas (< 400 px) usa 0.5 (el antialias redondea
   las esquinas ~1 px).
 - Bordes suaves: agrega un modificador `bevel` (`width` 0.005-0.01, `segments` 2).
-- **No es para** volúmenes: una sola silueta no da profundidad. Un personaje o un objeto redondo se
-  modela con las primitivas; `outline` sirve para sus partes planas.
+- **No es para** volúmenes: una sola silueta no da profundidad. Un objeto redondo se hace con `lathe`;
+  uno que no es plano ni redondo, con `views` (dos vistas); un personaje, con las primitivas.
+  `outline` sirve para sus partes planas.
 - Para comparar una pieza con huecos contra su imagen usa `compare -Holes keep`.
 - **Una parte de un color** (la estrella amarilla pintada en un farol rojo, un logo sobre una remera):
   `color: "#rrggbb"` toma lo que es de ese color en vez de separar la figura del fondo, con borde
@@ -180,7 +185,8 @@ Para objetos **de revolución** (jarrones, botellas, vasos, faroles, peones, col
 de escribir el `profile` a ojo, pásale la foto de lado y se mide. Usa `height` (o `width`) en metros. El
 eje es la vertical que mejor centra la silueta. Con `side: "both"` (por defecto) promedia las dos
 mitades; si de un lado hay un asa, un pico o una etiqueta que sobresale, usa `side: "left"` o
-`"right"` (la mitad limpia) y agrega el asa aparte (un `torus` o un `tube`).
+`"right"` (la mitad limpia) y agrega el asa aparte con `stroke` desde la misma foto (ver «Volumen
+desde dos vistas»).
 
 El resultado de `build` trae en `outlines` el `profile` medido (puedes copiarlo al spec y retocarlo),
 `keyPoints`, `maxErrorPercent`, `targetMet` y `asymmetryPercent`. Si la asimetría pasa del 3 % con
@@ -199,6 +205,45 @@ El resultado de `build` trae en `outlines` el `profile` medido (puedes copiarlo 
   `range: [from, to]`: cada pieza sale con la misma escala y el mismo eje, encaja con las vecinas y
   lleva su material con el color de la franja. El error y la asimetría se miden por franja.
   `examples/farol.json` lo hace con 6 franjas, una estrella por color, péndulo y llama.
+
+### Volumen desde dos vistas (`views`) y partes finas (`stroke`)
+Para lo que **no es plano ni de revolución** y se puede dibujar o fotografiar de frente y de costado:
+una regadera, una tetera, un ratón de computadora, un zapato, un auto de juguete, el cuerpo de un
+pájaro o un pez. `views` separa en cada imagen el cuerpo de sus partes finas y, en cada altura, toma
+dónde empieza y termina el cuerpo de frente (X) y de costado (Y): la sección es una elipse inscrita en
+ese rectángulo (`roundness` 2; 3-4 para cajas redondeadas) o la forma de la vista de arriba (`top`).
+Así calza con las dos siluetas: un cuello que no está en el centro (la boca de una regadera) sale
+en su lugar, porque el centro de cada altura también se mide.
+
+Las **partes finas** (lo que mide menos de `thin` % del alto de ancho: asas, picos, alambres, antenas,
+ramas, patas) no entran en el cuerpo: se hacen con `stroke` desde la imagen donde se ven a lo largo.
+`stroke` mide el eje de cada una y su ancho en cada punto, sigue sus curvas, y si toca el cuerpo el
+tubo se mete en él, sin huecos.
+
+1. **Mira qué entiende**: `blender-cli contour -Image frente.png -Strokes -Height 0.3 -Preview v.png`
+   dibuja el cuerpo en cian y cada trazo con su color, y lista los trazos del más largo al más corto
+   (`index`, `length`, `radius`, `attached`, `iou`, y la posición y dirección de cada punta).
+2. **Construye** con la misma imagen, el mismo `height` y la misma `location` en las dos piezas, así
+   encajan: `{"type": "views", "front": "frente.png", "side": "lado.png", "height": 0.3}` y un
+   `{"type": "stroke", "image": "frente.png", "height": 0.3, "pick": [0]}` por parte fina.
+3. **Compara con cámara ortográfica**: `compare -Reference frente.png -View front -Reference lado.png
+   -View right -Ortho -Objects Cuerpo,Asa,Pico` (las vistas dibujadas no tienen perspectiva; con
+   `-Objects` el piso y el resto no cuentan). La regadera del ejemplo da 0.992 de frente y 0.982 de costado.
+
+- **Las imágenes**: una vista cada una, de frente y de costado exactos (sin perspectiva: un plano, un
+  dibujo o una foto con zoom largo), con el objeto entero. Las dos deben mostrar el mismo alto total:
+  si en una falta una parte de arriba (el asa), `viewsMismatchPercent` lo avisa.
+- **De canto**: un trazo es un tubo redondo. Si la otra vista lo muestra más angosto (un asa de chapa),
+  mide ese ancho con `contour -Strokes` en la otra imagen y usa `flat` = ancho de canto / ancho. Mídelo
+  siempre: en la regadera, aplanar el asa a ojo bajó el IoU de costado de 0.98 a 0.92.
+- **Partes de otro color o que no son tubos** (la flor de una regadera, un tapón, una boquilla): toma
+  solo el tubo con `color` y pon la pieza en la punta con `end`/`start` y su dirección
+  (`endDirection`): un `lathe` o un cilindro girado para mirar en esa dirección.
+- El resultado trae en `outlines` el `size` del cuerpo, `maxErrorPercent` y `targetMet`, y cada trazo
+  con su IoU (aviso si < 0.85). `bs_source` guarda las imágenes con su sha1 y, en `stroke`, los puntos y
+  radios de cada trazo. `examples/regadera.json` lo hace con cuerpo, asa, pico y flor.
+- **No es para** formas con huecos que atraviesan el cuerpo de lado a lado, ni para lo que cambia de
+  sección de forma irregular (un personaje): ahí, primitivas.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no

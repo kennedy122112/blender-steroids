@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.15.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.16.0-0a7bbb?style=for-the-badge">
   <a href="https://github.com/kennedy122112/blender-steroids/actions/workflows/tests.yml"><img alt="Pruebas" src="https://img.shields.io/github/actions/workflow/status/kennedy122112/blender-steroids/tests.yml?branch=main&label=pruebas&style=for-the-badge"></a>
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
@@ -30,7 +30,7 @@
 - 🪑 **Modela** muebles, productos, maquetas, escenarios y logos 3D a partir de lo que describes, con medidas reales.
 - 🎨 **Viste la escena**: materiales PBR (madera, metal, vidrio, neón, texturas), luces de estudio o exteriores, HDRI y cámara encuadrada sola.
 - 🧸 **Personajes y formas orgánicas**: cajas redondeadas, cuerpos de bolas fundidas, tubos que siguen curvas, piezas torneadas, alas y aletas de membrana, y calcomanías y líneas pegadas a la superficie (ojos, bocas, logos).
-- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros. Y de la foto de lado de un jarrón, una botella o un farol saca su perfil y lo gira, en franjas con el color de cada parte; también separa una parte por su color (una estrella pintada sobre el papel). Puede entregarlas como curvas editables (Bézier) y cada pieza guarda con qué se hizo.
+- ✂️ **Siluetas a 3D**: convierte la silueta de una imagen (o una lista de puntos) en una pieza editable con sus huecos, usando Fourier para las curvas y polígonos para las esquinas, con el error medido: logos, emblemas, engranajes, llamas, letreros. Y de la foto de lado de un jarrón, una botella o un farol saca su perfil y lo gira, en franjas con el color de cada parte; también separa una parte por su color (una estrella pintada sobre el papel). Con una vista de frente y una de costado arma el volumen de lo que no es plano ni redondo (una regadera, un ratón, un zapato) y convierte las asas, picos y alambres en tubos que siguen su forma y se meten en el cuerpo. Puede entregarlas como curvas editables (Bézier) y cada pieza guarda con qué se hizo.
 - 🕹️ **Estilo retro y animación**: pixel art en las texturas, render con look de consola de 32 bits y ciclos de caminata para personajes hechos de piezas.
 - 📦 **Parte de modelos y recursos ya hechos**: importa tus modelos (glb, fbx, obj, stl, usd) y busca y descarga HDRI, texturas y modelos libres (CC0) de Poly Haven.
 - 🖼️ **Trabaja con referencias**: lee proporciones y paleta de tu imagen, compara cada vuelta con ella alineada y con medidas, y revisa solo el armado (piezas flotando o atravesadas).
@@ -199,9 +199,9 @@ Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-c
 | `exec -Script s.py [-Save x.blend]` | Ejecuta código `bpy`; devuelve `result` y `stdout` |
 | `render -Path img.png [...]` | Render (en vivo, sobre una copia en segundo plano) |
 | `export -Path m.glb [-Objects a,b]` | GLB, glTF, FBX, OBJ, STL, PLY, USD |
-| `compare -Reference ref.png -Path c.png [-FitView] [-Holes keep]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara; `-Holes keep` respeta los agujeros reales |
+| `compare -Reference ref.png -Path c.png [-FitView] [-Holes keep] [-Ortho]` | Render alineado a la figura de la referencia, siluetas superpuestas, guías cada 10 % y medidas (IoU, anchos y alturas por guía); `-FitView` busca el ángulo de cámara; `-Holes keep` respeta los agujeros reales; `-Ortho` sin perspectiva, para vistas dibujadas |
 | `check [-Objects a,b]` | Piezas que flotan, enterradas dentro de otras o que se atraviesan |
-| `contour -Image s.png [-Lathe] [-Color "#rrggbb"] [-Preview v.png]` | Analiza una silueta sin construir: regiones, huecos, método (Fourier o polígono) y error de cada contorno, o el perfil de torno con sus franjas de color; `-Color` toma solo lo de ese color; dibuja lo que entendió |
+| `contour -Image s.png [-Lathe] [-Strokes] [-Color "#rrggbb"] [-Preview v.png]` | Analiza una silueta sin construir: regiones, huecos, método (Fourier o polígono) y error de cada contorno, o el perfil de torno con sus franjas de color, o (`-Strokes`) el cuerpo y las partes finas como trazos; `-Color` toma solo lo de ese color; dibuja lo que entendió |
 | `walk -Spec caminata.json` | Ciclo de caminata sin huesos: pies planos y rebote medido en cada fotograma |
 | `render -Path x.png -Retro` | Look de consola de 32 bits: baja resolución, 15 bits con tramado, píxeles duros |
 | `import -Path m.glb [-Height 0.85]` | Trae un modelo como base: agrupado, escalado y apoyado en el suelo |
@@ -210,13 +210,13 @@ Windows: `bin\blender-cli.cmd <comando>` (no pasa por PowerShell; `bin/blender-c
 | `build -Spec x.json -Patch fit.json` | Reconstruye aplicando el resultado de `fit` |
 | `save [-Path]`, `open -Path` | Guardar y abrir en el Blender en vivo |
 
-El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo; y `lathe` desde la foto de un jarrón con asa), [`examples/libelula.json`](examples/libelula.json) (alas de `outline` que aletean con `motion`), [`examples/pendulo-y-resorte.json`](examples/pendulo-y-resorte.json) y [`examples/farol.json`](examples/farol.json) (un farol hecho desde una ilustración: 6 franjas de torno, estrella por color, péndulo, borla con `follow` y llama con ruido).
+El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-model/SKILL.md). Ejemplos: [`examples/mesa-con-taza.json`](examples/mesa-con-taza.json) (objetos, modificadores, luces), [`examples/pip-farolero.json`](examples/pip-farolero.json) (personaje: `superellipsoid`, `blobby`, `tube`, `lathe`, `decal` con `attach` y líneas con `onSurface`) y [`examples/siluetas.json`](examples/siluetas.json) (`outline` desde imágenes y desde puntos: una llama con hueco, un engranaje y un rayo; y `lathe` desde la foto de un jarrón con asa), [`examples/libelula.json`](examples/libelula.json) (alas de `outline` que aletean con `motion`), [`examples/pendulo-y-resorte.json`](examples/pendulo-y-resorte.json), [`examples/farol.json`](examples/farol.json) (un farol hecho desde una ilustración: 6 franjas de torno, estrella por color, péndulo, borla con `follow` y llama con ruido) y [`examples/regadera.json`](examples/regadera.json) (una regadera desde dos vistas: cuerpo con `views`, asa y pico con `stroke`).
 
 ### Estructura del repo
 
 | Ruta | Contenido |
 |---|---|
-| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos; solo NumPy), `dynamics.py` (oscilar, resorte, péndulo y seguir, con RK4; sin dependencias) |
+| `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos, torno, dos vistas y trazos; solo NumPy), `dynamics.py` (oscilar, resorte, péndulo y seguir, con RK4; sin dependencias) |
 | `tests/integration/smoke.py` | Prueba con Blender de verdad: ejemplos, curvas horneadas, GLB reabierto, período del péndulo, idempotencia, objetos ajenos, reemplazo malla/curva y archivo intacto ante un error |
 | `.github/workflows/tests.yml` | CI: pruebas unitarias (Python 3.10 y 3.12) y Blender 4.2 sin interfaz con la prueba de integración, en cada PR |
 | `tests/` | Pruebas de contornos y de movimiento: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |

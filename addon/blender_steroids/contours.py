@@ -706,3 +706,486 @@ def rasterize(loops, shape, origin, scale):
             xi = ax + (ys - ay) * (bx - ax) / (by - ay)
             m[lo:hi] ^= cruza & (xx[lo:hi] < xi)
     return m
+
+
+# ----------------------------------------------------------------------------------- vistas y trazos
+
+def _crecer(m, n):
+    """Dilatación n veces alternando cruz y cuadrado 3x3: un octágono, casi un disco (con solo la cruz
+    sería un rombo, que cabe en una franja diagonal más angosta que en una recta)."""
+    m = np.asarray(m, bool)
+    for i in range(int(n)):
+        d = m.copy()
+        d[1:] |= m[:-1]
+        d[:-1] |= m[1:]
+        d[:, 1:] |= m[:, :-1]
+        d[:, :-1] |= m[:, 1:]
+        if i % 2:
+            d[1:, 1:] |= m[:-1, :-1]
+            d[1:, :-1] |= m[:-1, 1:]
+            d[:-1, 1:] |= m[1:, :-1]
+            d[:-1, :-1] |= m[1:, 1:]
+        m = d
+    return m
+
+
+def _encoger(m, n):
+    return ~_crecer(~np.asarray(m, bool), n)
+
+
+def _rellenar(reg, shape):
+    """Máscara de una región {outer, holes} trazada en píxeles (x, fila)."""
+    return rasterize([reg['outer'] * [1, -1]] + [hh * [1, -1] for hh in reg['holes']], shape, (0.0, 0.0), 1.0)
+
+
+def split_thin(f, width):
+    """Separa el cuerpo de las partes finas que le salen (asas, picos, alambres, patas finas): lo que
+    queda al abrir la silueta con un disco de `width` px de diámetro es el cuerpo (su región más grande),
+    con las esquinas que la apertura le redondea y cortado en cada unión por la recta entre sus dos
+    esquinas. Devuelve (cuerpo, finos)."""
+    m = np.asarray(f) > 0.5
+    h, w = m.shape
+    r = max(1, int(round(width / 2)))
+    abierto = _crecer(_encoger(m, r), r) & m
+    regs = regions(trace(abierto.astype(np.float64)))
+    if not regs:
+        return np.zeros_like(m), m
+    mayor = max(regs, key=lambda g: abs(area(g['outer'])))
+    base = _rellenar(mayor, m.shape) & abierto
+    resto = m & ~base
+    # partes finas de verdad; las astillas que la apertura le quita a cada esquina vuelven al cuerpo
+    finas = np.zeros_like(m)
+    for reg in regions(trace(resto.astype(np.float64))):
+        if abs(area(reg['outer'])) >= 1.5 * r * r:
+            finas |= _rellenar(reg, m.shape) & resto
+    cuerpo = m & ~finas
+    # en cada unión el borde de la apertura no sigue el del cuerpo: sigue los lados de la parte fina un
+    # trecho y la cruza con un arco (un muñón). Se corta por la recta entre las dos esquinas entrantes
+    # donde la parte fina sale del cuerpo.
+    lazo = mayor['outer']
+    n = len(lazo)
+    cerca = _crecer(finas, 2)
+    junto = cerca[np.clip(np.round(lazo[:, 1]).astype(int), 0, h - 1),
+                  np.clip(np.round(lazo[:, 0]).astype(int), 0, w - 1)]
+
+    def esquina(i, paso):
+        """Desde el extremo i del arco, por el borde hacia afuera: la primera esquina marcada (la unión)."""
+        mejor, giro_max, d_mejor = i, 35.0, None
+        for d in range(6, int(3 * r) + 6):
+            k = (i + paso * d) % n
+            u, v = lazo[k] - lazo[(k - 4) % n], lazo[(k + 4) % n] - lazo[k]
+            giro = abs(np.degrees(np.arctan2(u[0] * v[1] - u[1] * v[0], u @ v)))
+            if giro > giro_max:
+                mejor, giro_max, d_mejor = k, giro, d
+            elif d_mejor is not None and d > d_mejor + 6:
+                break                                       # pasó la esquina: se queda con su punto de más giro
+        return mejor
+    if junto.any() and not junto.all():
+        k = int(np.argmin(junto))                               # arranca fuera de una unión
+        lazo, junto = np.roll(lazo, -k, axis=0), np.roll(junto, -k)
+        i = 0
+        while i < n:
+            if not junto[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and junto[j + 1]:
+                j += 1
+            if j - i >= 2:
+                a_, b_ = esquina(i, -1), esquina(j, 1)
+                idx = np.arange(a_, a_ + ((b_ - a_) % n) + 1) % n
+                munon = rasterize([lazo[idx] * [1, -1]], m.shape, (0.0, 0.0), 1.0) & cuerpo
+                cuerpo &= ~munon
+                finas |= munon
+            i = j + 1
+    return cuerpo, finas
+
+
+def _vista(rgba, thin=10, threshold=None):
+    """Lo común a una vista: cobertura, cuerpo y partes finas, y el marco de la vista (en píxeles): abajo
+    de toda la silueta (z = 0), su alto (el `height` del spec) y el centro del cuerpo (x = 0)."""
+    f = coverage(rgba, threshold)
+    lazos = trace(f)
+    if not lazos:
+        raise ValueError('No se encontró ninguna figura en la imagen (prueba con threshold)')
+    filas = np.concatenate([l[:, 1] for l in lazos])
+    arriba, abajo = float(filas.min()), float(filas.max())
+    alto = abajo - arriba
+    cuerpo, finos = split_thin(f, float(thin) / 100 * alto)
+    if not cuerpo.any():
+        raise ValueError('No queda cuerpo al quitar las partes finas: baja thin (ahora %s%% del alto)' % thin)
+    fc = f * _crecer(cuerpo, 1)
+    pol = max(trace(fc), key=lambda l: abs(area(l)))
+    # centro: la mediana de los centros de cada altura (un detalle de un lado no lo corre)
+    ys = np.linspace(pol[:, 1].min() + 0.5, pol[:, 1].max() - 0.5, 200)
+    centros = [(c[0] + c[-1]) / 2 for c in (_cortes(pol * [1, -1], -y) for y in ys) if len(c) >= 2]
+    x0 = float(np.median(centros))
+    return {'f': f, 'cuerpo': cuerpo, 'finos': finos, 'pol': pol, 'x0': x0, 'abajo': abajo, 'alto': alto}
+
+
+def view_profile(rgba, thin=10, threshold=None, levels=600):
+    """El cuerpo de una vista (sin asas ni picos): por cada altura, dónde empieza y dónde termina. Devuelve
+    (z, izquierda, derecha) en píxeles, z desde abajo de la silueta entera y x desde el centro del
+    cuerpo, y la vista (_vista)."""
+    v = _vista(rgba, thin, threshold)
+    pol = v['pol'] * [1, -1]                               # y hacia arriba
+    y0, y1 = pol[:, 1].min(), pol[:, 1].max()
+    z, iz, de = [], [], []
+    for y in np.linspace(y0 + 0.5, y1 - 0.5, int(levels)):
+        xs = _cortes(pol, y)
+        if len(xs) >= 2:
+            z.append(y + v['abajo'])
+            iz.append(xs[0] - v['x0'])
+            de.append(xs[-1] - v['x0'])
+    # donde se cortó una parte fina el borde es escalonado (sin antialias): medio píxel de ida y vuelta
+    # que en la malla se ve como anillos. Una media de 5 niveles (unos 2 px) lo alisa.
+    bordes = _media_movil(np.column_stack([iz, de]), 5)
+    return np.array(z), bordes[:, 0], bordes[:, 1], v
+
+
+def section_shape(segments=48, roundness=2.0, top=None, threshold=None):
+    """Forma de la sección horizontal en el cuadrado [-1, 1]²: una superelipse (roundness 2 = elipse,
+    más = más cuadrada, 1 = rombo) o el contorno de la vista de arriba (`top`, imagen) escalado."""
+    n = int(segments)
+    if top is not None:
+        f = coverage(top, threshold)
+        lazos = trace(f)
+        if not lazos:
+            raise ValueError('top: no se encontró ninguna figura en la imagen')
+        p = canonical(max(lazos, key=lambda l: abs(area(l))) * [1, -1])
+        lo, hi = p.min(0), p.max(0)
+        q = resample((p - (lo + hi) / 2) / ((hi - lo) / 2), n)
+        k = int(np.argmax(q[:, 0] - 1e-6 * np.abs(q[:, 1])))       # arranca a la derecha (ángulo 0)
+        return np.roll(q, -k, axis=0)
+    e = 2.0 / max(float(roundness), 0.2)
+    t = 2 * np.pi * np.arange(n) / n
+    c, s = np.cos(t), np.sin(t)
+    return np.column_stack([np.sign(c) * np.abs(c) ** e, np.sign(s) * np.abs(s) ** e])
+
+
+def views_body(front, side, height, thin=10, tolerance=0.25, rings=64, threshold=None, levels=400):
+    """Cuerpo a partir de dos vistas (frente: X a la derecha; costado, la vista derecha: Y a la derecha),
+    sin sus partes finas: en cada altura el frente da dónde empieza y termina en X y el costado en Y, y
+    la sección es una forma (section_shape) inscrita en ese rectángulo, así el cuerpo calza con las dos
+    siluetas. Para lo que no es plano ni de revolución: una regadera, un ratón, un zapato, un auto de
+    juguete, el cuerpo de un pájaro. `height` es el alto de la silueta entera (con asas) en las dos
+    imágenes. Devuelve (niveles [[z, x0, x1, y0, y1], ...] en metros, info)."""
+    zf, xl, xr, vf = view_profile(front, thin, threshold)
+    zs, yl, yr, vs = view_profile(side, thin, threshold)
+    kf, ks = float(height) / vf['alto'], float(height) / vs['alto']
+    zf, xl, xr = zf * kf, xl * kf, xr * kf
+    zs, yl, yr = zs * ks, yl * ks, yr * ks
+    z0, z1 = max(zf.min(), zs.min()), min(zf.max(), zs.max())
+    if z1 <= z0:
+        raise ValueError('Las dos vistas no se solapan en altura: ¿son del mismo objeto y del mismo alto?')
+    Z = np.linspace(z0, z1, int(levels))
+    curvas = [np.interp(Z, zf, xl), np.interp(Z, zf, xr), np.interp(Z, zs, yl), np.interp(Z, zs, yr)]
+    tol = float(tolerance) / 100 * float(height)
+    claves = {0, len(Z) - 1}
+    for c in curvas:
+        simple = _rdp_abierto(np.column_stack([c, Z]), tol / 2)
+        claves |= {int(np.argmin(np.abs(Z - z))) for z in simple[:, 1]}
+    claves = sorted(claves)
+    paso = max(1, int(np.ceil((len(Z) - 1) / max(int(rings), 2))))
+    for a_, b_ in zip(list(claves), list(claves)[1:]):
+        claves += list(range(a_ + paso, b_, paso))
+    claves = sorted(set(claves))
+    # error perpendicular (un hombro casi horizontal entre dos niveles no es un error de la silueta)
+    err = max(_desvio(np.column_stack([c, Z]), np.column_stack([c[claves], Z[claves]])) for c in curvas)
+    salida = [[float(Z[i])] + [float(c[i]) for c in curvas] for i in claves]
+    desfase = abs(zf.min() - zs.min()) + abs(zf.max() - zs.max())
+    info = {'height': round(float(height), 4),
+            'size': [round(float(curvas[1].max() - curvas[0].min()), 4),
+                     round(float(curvas[3].max() - curvas[2].min()), 4), round(float(z1 - z0), 4)],
+            'levels': len(salida), 'tolerancePercent': float(tolerance),
+            'maxErrorPercent': round(100 * err / float(height), 3), 'targetMet': bool(err <= tol + 1e-12),
+            'viewsMismatchPercent': round(100 * float(desfase) / float(height), 2), 'thinPercent': float(thin)}
+    return salida, info
+
+
+def _esqueleto(m):
+    """Eje de una figura, de un píxel de ancho (Zhang-Suen, vectorizado)."""
+    s = np.pad(np.asarray(m, bool), 1).astype(np.uint8)
+    while True:
+        cambio = False
+        for paso in (0, 1):
+            p2, p3, p4, p5 = s[:-2, 1:-1], s[:-2, 2:], s[1:-1, 2:], s[2:, 2:]
+            p6, p7, p8, p9 = s[2:, 1:-1], s[2:, :-2], s[1:-1, :-2], s[:-2, :-2]
+            vec = [p2, p3, p4, p5, p6, p7, p8, p9, p2]
+            B = sum(v.astype(np.int16) for v in vec[:8])
+            A = sum(((vec[i] == 0) & (vec[i + 1] == 1)).astype(np.int16) for i in range(8))
+            if paso == 0:
+                c = (p2 * p4 * p6 == 0) & (p4 * p6 * p8 == 0)
+            else:
+                c = (p2 * p4 * p8 == 0) & (p2 * p6 * p8 == 0)
+            quitar = (s[1:-1, 1:-1] == 1) & (B >= 2) & (B <= 6) & (A == 1) & c
+            if quitar.any():
+                s[1:-1, 1:-1][quitar] = 0
+                cambio = True
+        if not cambio:
+            return s[1:-1, 1:-1].astype(bool)
+
+
+def _vecinos(m):
+    p = np.pad(m, 1).astype(np.int16)
+    h, w = m.shape
+    return sum(p[1 + dy:1 + dy + h, 1 + dx:1 + dx + w] for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+               if dy or dx) * m
+
+
+def _camino_mas_largo(sk):
+    """El camino más largo del esqueleto (dos recorridos en anchura), como puntos (x, fila)."""
+    from collections import deque
+    pix = set(zip(*[a.tolist() for a in np.nonzero(sk)]))
+    if not pix:
+        return np.zeros((0, 2))
+
+    def recorrer(inicio):
+        padre, q, ultimo = {inicio: None}, deque([inicio]), inicio
+        while q:
+            p = q.popleft()
+            ultimo = p
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    n = (p[0] + dy, p[1] + dx)
+                    if n in pix and n not in padre:
+                        padre[n] = p
+                        q.append(n)
+        return ultimo, padre
+    a, _ = recorrer(min(pix))
+    b, padre = recorrer(a)
+    camino = [b]
+    while padre[camino[-1]] is not None:
+        camino.append(padre[camino[-1]])
+    return np.array([[x, y] for y, x in camino], np.float64)
+
+
+def _muestrear(g, pts):
+    """Valor bilineal de g en puntos (x, fila); 0 fuera de la imagen."""
+    h, w = g.shape
+    x, y = pts[:, 0], pts[:, 1]
+    fuera = (x < 0) | (y < 0) | (x > w - 1) | (y > h - 1)
+    x, y = np.clip(x, 0, w - 1.0001), np.clip(y, 0, h - 1.0001)
+    i, j = y.astype(int), x.astype(int)
+    fy, fx = y - i, x - j
+    v = (g[i, j] * (1 - fx) * (1 - fy) + g[i, j + 1] * fx * (1 - fy) + g[i + 1, j] * (1 - fx) * fy
+         + g[i + 1, j + 1] * fx * fy)
+    return np.where(fuera, 0.0, v)
+
+
+def _por_arco(p, n):
+    """n puntos equiespaciados sobre la polilínea abierta p (con sus extremos)."""
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(p[:, :2], axis=0), axis=1))])
+    t = np.linspace(0, s[-1], int(n))
+    return np.column_stack([np.interp(t, s, p[:, c]) for c in range(p.shape[1])])
+
+
+def _media_movil(v, k):
+    """Media móvil de k (impar) por columna, con los extremos fijos."""
+    if len(v) <= k:
+        return v
+    out = v.copy()
+    m = k // 2
+    for c in range(v.shape[1]):
+        out[m:-m, c] = np.convolve(v[:, c], np.ones(k) / k, mode='valid')
+    return out
+
+
+def _secciones(g, p, cuerpo, grosor, junto=None):
+    """Ancho de la parte fina en cada punto de su eje (la integral de la cobertura a lo largo de la
+    normal: subpíxel) y cuánto está corrido el punto del medio de esa sección. NaN donde no se puede
+    medir: dentro del cuerpo o junto a él, donde la parte fina se ensancha en el rincón de la unión."""
+    tg = np.gradient(p, axis=0)
+    tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
+    nrm = np.column_stack([-tg[:, 1], tg[:, 0]])
+    R = 0.75 * grosor + 3
+    ts = np.arange(-R, R + 1e-9, 0.25)
+    k0 = len(ts) // 2
+    anchos, desvio = np.full(len(p), np.nan), np.full(len(p), np.nan)
+    if junto is None:
+        junto = _crecer(cuerpo, max(1, int(0.75 * grosor)))
+    h, w = cuerpo.shape
+
+    def en(m, c):
+        yi, xi = int(round(c[1])), int(round(c[0]))
+        return 0 <= yi < h and 0 <= xi < w and m[yi, xi]
+    lejos = [not en(junto, c) for c in p]
+    if sum(lejos) < 3:
+        lejos = [True] * len(p)
+    for i, (c, n) in enumerate(zip(p, nrm)):
+        if not lejos[i] or en(cuerpo, c):
+            continue
+        v = _muestrear(g, c[None] + ts[:, None] * n[None])
+        if v[k0] <= 0.02:
+            continue
+        lo = hi = k0
+        while lo > 0 and v[lo - 1] > 0.02:
+            lo -= 1
+        while hi < len(ts) - 1 and v[hi + 1] > 0.02:
+            hi += 1
+        tramo = v[lo:hi + 1]
+        anchos[i] = tramo.sum() * 0.25
+        desvio[i] = float((tramo * ts[lo:hi + 1]).sum() / max(tramo.sum(), 1e-9))
+    return anchos, desvio
+
+
+def _trazo(comp, g, cuerpo, grosor):
+    """Eje y ancho de una parte fina: el esqueleto podado (sin las ramitas de las esquinas), su camino
+    más largo suavizado y alargado por la tangente hasta salir de la parte (o entrar al cuerpo), y el
+    ancho de cada punto como la integral de la cobertura a lo largo de la normal (subpíxel)."""
+    sk = _esqueleto(comp)
+    poda = max(1, int(round(0.6 * grosor)))
+    for _ in range(poda):
+        fin = sk & (_vecinos(sk) <= 1)
+        if not fin.any() or fin.sum() >= sk.sum():
+            break
+        sk &= ~fin
+    p = _camino_mas_largo(sk)
+    if len(p) < 3:
+        return None
+    largo = np.linalg.norm(np.diff(p, axis=0), axis=1).sum()
+    p = _media_movil(_por_arco(p, max(3, int(np.ceil(largo / 1.5)))), 7)
+    # las puntas del esqueleto se doblan hacia las esquinas (o hacia el ancho de un remate): se cortan
+    # y el trazo se alarga recto, con la dirección del tramo anterior
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))])
+    if s[-1] > 4 * poda:
+        p = p[(s >= poda) & (s <= s[-1] - poda)]
+    # el esqueleto se corre hacia un lado donde la parte fina cambia de forma (cerca de una unión): cada
+    # punto se lleva al medio de su sección, medido en la imagen
+    for _ in range(2):
+        _, desvio = _secciones(g, p, cuerpo, grosor)
+        tg = np.gradient(p, axis=0)
+        tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
+        p = p + np.column_stack([-tg[:, 1], tg[:, 0]]) * np.nan_to_num(desvio)[:, None]
+        p = _media_movil(p, 7)
+    pegado = []
+    junto = _crecer(cuerpo, max(1, int(0.75 * grosor)))
+    # los puntos junto al cuerpo no se pudieron centrar: se quitan y se llega al cuerpo siguiendo la parte
+    afuera = np.array([not (0 <= int(round(c[1])) < junto.shape[0] and 0 <= int(round(c[0])) < junto.shape[1]
+                            and junto[int(round(c[1])), int(round(c[0]))]) for c in p])
+    if afuera.sum() >= 3:
+        i0, i1 = int(np.argmax(afuera)), len(p) - int(np.argmax(afuera[::-1]))
+        p = p[i0:i1]
+    for lado in (0, 1):
+        q = p if lado else p[::-1]                          # el extremo a alargar queda al final
+        tramo = q[-min(len(q), max(3, int(2 * poda / 1.5))):]
+        _, _, vt = np.linalg.svd(tramo - tramo.mean(0))
+        t = vt[0] if np.dot(vt[0], tramo[-1] - tramo[0]) >= 0 else -vt[0]
+        # se sigue la parte fina de a medio píxel, volviendo al medio de la sección en cada paso (así
+        # sigue la curva de un asa); junto al cuerpo, donde el rincón la ensancha, sigue recto
+        x, pasos, toca, hechos = q[-1].copy(), 0, False, [q[-1].copy()]
+        while pasos < 2 * (4 * poda + 2 * grosor):
+            sig = x + 0.5 * t
+            yi, xi = int(round(sig[1])), int(round(sig[0]))
+            if 0 <= yi < cuerpo.shape[0] and 0 <= xi < cuerpo.shape[1] and cuerpo[yi, xi]:
+                toca = True
+                break
+            if _muestrear(g, sig[None])[0] < 0.5:
+                break
+            if not (0 <= yi < junto.shape[0] and 0 <= xi < junto.shape[1] and junto[yi, xi]):
+                _, d = _secciones(g, np.array([sig - 0.5 * t, sig, sig + 0.5 * t]), cuerpo, grosor, junto)
+                if np.isfinite(d[1]):
+                    # de a poco: sigue una curva suave, pero no dobla hacia el ancho de un remate
+                    sig = sig + np.array([-t[1], t[0]]) * float(np.clip(d[1], -0.15, 0.15))
+                    hechos.append(sig)
+                    t_ = sig - hechos[max(0, len(hechos) - 8)]
+                    if np.linalg.norm(t_) > 1e-6:
+                        t = t_ / np.linalg.norm(t_)
+            x, pasos = sig, pasos + 1
+        if not toca:
+            # se salió por un costado justo al llegar (un asa que se apoya en un hombro redondeado)
+            ys_, xs_ = np.nonzero(cuerpo)
+            if len(ys_) and np.hypot(xs_ - x[0], ys_ - x[1]).min() <= 0.75 * grosor:
+                toca = True
+        extra = [x] if pasos else []
+        if toca:                                            # entra en el cuerpo: el tubo queda metido
+            extra.append(x + t * grosor)
+        q = np.vstack([q, np.array(extra)]) if extra else q
+        p = q if lado else q[::-1]
+        if toca:
+            pegado.append('end' if lado else 'start')
+    largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
+    p = _por_arco(p, max(4, int(np.ceil(largo))))
+    anchos, _ = _secciones(g, p, cuerpo, grosor)
+    # dentro del cuerpo (o donde no se pudo medir) vale el ancho medido más cercano
+    ok = np.isfinite(anchos)
+    if not ok.any():
+        return None
+    idx = np.arange(len(p))
+    anchos = np.interp(idx, idx[ok], anchos[ok])
+    if len(anchos) > 9:                                     # mediana (sin picos sueltos) y media móvil
+        anchos[4:-4] = np.median(np.lib.stride_tricks.sliding_window_view(anchos, 9), axis=1)
+    anchos = _media_movil(np.column_stack([anchos]), 5)[:, 0]
+    return p, anchos, pegado
+
+
+def _direccion(a, b):
+    d = np.asarray(b, float) - np.asarray(a, float)
+    return [round(float(x), 4) for x in d / max(float(np.linalg.norm(d)), 1e-12)]
+
+
+def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.15, min_length=3.0):
+    """Partes finas de una vista (asas, picos, alambres, antenas, patas, ramas) como trazos: su eje y su
+    ancho en cada punto, en el marco de la vista (x desde el centro del cuerpo, z desde abajo de la
+    silueta; en metros si hay `height`, el alto de la silueta entera). Con `color`, solo las partes de
+    ese color. Devuelve (trazos, info), del más largo al más corto, cada uno con `points` [[x, z], ...],
+    `radii`, en qué extremo toca el cuerpo (`attached`: start/end) y el IoU de su silueta reconstruida
+    contra la de la imagen."""
+    import time
+    inicio = time.perf_counter()
+    v = _vista(rgba, thin, threshold)
+    k = float(height) / v['alto'] if height else 1.0 / v['alto']
+    grosor_max = float(thin) / 100 * v['alto']
+    fuente = color_coverage(rgba, color, color_tol) if color else v['f']
+    finos = v['finos'] & (fuente > 0.5)
+    g = fuente * ~v['cuerpo']
+    salida = []
+    h, w = finos.shape
+    for reg in regions(trace(finos.astype(np.float64)), min_area=(0.008 * v['alto']) ** 2):
+        comp = _rellenar(reg, finos.shape) & finos
+        if not comp.any():
+            continue
+        ys, xs = np.nonzero(comp)
+        pad = int(grosor_max) + 4
+        y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
+        x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+        rec_ = (slice(y0, y1), slice(x0, x1))
+        c_ = comp[rec_]
+        grosor, e = 0, c_
+        while e.any() and grosor < 4 * grosor_max:
+            e = _encoger(e, 1)
+            grosor += 2
+        r = _trazo(c_, g[rec_] * _crecer(c_, 2), v['cuerpo'][rec_], max(grosor, 2))
+        if r is None:
+            continue
+        p, anchos, pegado = r
+        largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
+        if largo < min_length * float(np.median(anchos)):
+            continue                                        # una mancha, no un trazo
+        # IoU de la silueta reconstruida (fuera del cuerpo) contra la parte medida
+        tg = np.gradient(p, axis=0)
+        tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
+        nrm = np.column_stack([-tg[:, 1], tg[:, 0]])
+        borde = np.vstack([p + nrm * anchos[:, None] / 2, (p - nrm * anchos[:, None] / 2)[::-1]])
+        hecho = rasterize([borde * [1, -1]], c_.shape, (0.0, 0.0), 1.0)
+        afuera = ~v['cuerpo'][rec_]
+        iou = float((hecho & c_ & afuera).sum() / max(((hecho | c_) & afuera).sum(), 1))
+        p = p + [x0, y0]
+        pts = np.column_stack([(p[:, 0] - v['x0']) * k, (v['abajo'] - p[:, 1]) * k, anchos * k / 2])
+        n = int(np.clip(np.ceil(largo / max(2.0, 0.5 * float(np.median(anchos)))), 6, 160))
+        sal = _por_arco(pts, n)
+        salida.append({'points': [[round(float(a), 5), round(float(b), 5)] for a, b in sal[:, :2]],
+                       'radii': [round(float(x), 5) for x in sal[:, 2]],
+                       'length': round(largo * k, 4), 'attached': pegado,
+                       'radius': [round(float(sal[:, 2].min()), 4), round(float(sal[:, 2].max()), 4)],
+                       'start': [round(float(x), 4) for x in sal[0, :2]],
+                       'end': [round(float(x), 4) for x in sal[-1, :2]],
+                       # hacia afuera en cada punta: para poner ahí un remate (una flor de regadera, un tapón)
+                       'startDirection': _direccion(sal[min(3, len(sal) - 1), :2], sal[0, :2]),
+                       'endDirection': _direccion(sal[max(0, len(sal) - 4), :2], sal[-1, :2]),
+                       'iou': round(iou, 3)})
+    salida.sort(key=lambda s: -s['length'])
+    info = {'strokes': len(salida), 'thinPercent': float(thin),
+            'elapsedMs': round(1000 * (time.perf_counter() - inicio), 1),
+            '_frame': {'k': k, 'x0': v['x0'], 'abajo': v['abajo']}, '_body': v['pol']}
+    return salida, info
