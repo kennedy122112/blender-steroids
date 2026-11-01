@@ -303,16 +303,22 @@ tubo se mete en él, sin huecos.
   alas plegadas al costado): `exclude: ["#rrggbb"]` (con `excludeTolerance`, 0.1; bájala si un color
   vecino es parecido, como unas botas negras sobre una base gris oscura) la saca de la figura en
   `views`, `stroke` y `outline` con `inView`. El marco no cambia: `height` sigue siendo el alto de la
-  silueta entera, así todas las piezas encajan. La base misma: un `lathe` con `range` desde la imagen.
+  silueta entera, así todas las piezas encajan. La base misma: `views` con su `color` (y `pickFront`/
+  `pickSide`), no un `lathe` desde una sola imagen: el torno queda centrado en esa vista, y si de costado
+  el cuerpo no está en el centro del dibujo (un hocico corre la cabeza hacia adelante) la figura queda
+  corrida sobre su base (en un dragoncito, de 0.904 a 0.961 de costado al cambiarla).
 - **Varios colores en un cuerpo** (pelo, piel y ropa en la cabeza y el torso de una figura): `paint:
   {"#rrggbb": "Material", ...}` pinta cada cara con el material del color más cercano de la vista que
   la mira (las de adelante, del frente; costados, atrás y arriba, del costado: el pelo cubre la nuca y
   deja la cara). El borde entre colores se subdivide (`paintRefine`, 2) para que no salga en escalera, y
   con `paint` el cuerpo tiene más caras por defecto. Un detalle de otro color (los ojos, unos botones)
   toma el color de alrededor: hazlo aparte con `outline` + `attach`. Lo que en una vista tapa al cuerpo
-  (una mano delante del costado) píntalo en el dibujo con un tono de sombra: si no, pinta ese costado.
-- **Una pieza de un color con volumen** (una bota, un gorro): `views` con `color` y `pickFront`/`pickSide`
-  (la región de ese color en cada vista, de mayor a menor área) sale entera y en su lugar.
+  (una mano delante del costado) píntalo en el dibujo con un tono de sombra, y no pongas ese tono en
+  `paint`: así se salta; si está en la paleta (o es el color de la piel), pinta ese costado.
+- **Una pieza de un color con volumen** (una bota, un gorro, la base): `views` con `color` y `pickFront`/
+  `pickSide` (la región de ese color en cada vista, de mayor a menor área) sale entera y en su lugar.
+- **Piezas planas por color** (unas alas abiertas detrás del cuerpo): elige las regiones con `pick` (las
+  más grandes primero); el antialias de otros bordes deja puntitos sueltos de un color parecido.
 - **Partes juntas** (dos piernas a pocos mm): cada unión se corta sola, y una parte casi cuadrada (una
   pierna corta entre el cuerpo y una bota) va de donde se pega hacia su centro.
 - **Una figura de vinilo sobre su base** (`examples/nico.json`, un personaje original): cabeza y torso con
