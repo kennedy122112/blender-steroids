@@ -53,17 +53,19 @@
    "roughness": 0.5
   }
  ],
+ "sheet": {
+  "front": "nico/frente.png",
+  "side": "nico/lado.png",
+  "height": 0.12,
+  "exclude": [
+   "#3a3f4a"
+  ],
+  "excludeTolerance": 0.05
+ },
  "objects": [
   {
    "name": "Cuerpo",
    "type": "views",
-   "front": "nico/frente.png",
-   "side": "nico/lado.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "roundness": 3,
    "material": "Piel",
    "smooth": true,
@@ -77,12 +79,6 @@
   {
    "name": "Mangas",
    "type": "stroke",
-   "image": "nico/frente.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#f5c83c",
    "material": "Impermeable",
    "smooth": true
@@ -90,12 +86,6 @@
   {
    "name": "Manos",
    "type": "stroke",
-   "image": "nico/frente.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#fad7b9",
    "blobs": true,
    "material": "Piel",
@@ -104,13 +94,6 @@
   {
    "name": "Piernas",
    "type": "stroke",
-   "image": "nico/frente.png",
-   "side": "nico/lado.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#3c5aa0",
    "material": "Pantalon",
    "smooth": true
@@ -118,13 +101,6 @@
   {
    "name": "BotaA",
    "type": "views",
-   "front": "nico/frente.png",
-   "side": "nico/lado.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#1e1e22",
    "colorTolerance": 0.06,
    "pickFront": [
@@ -139,13 +115,6 @@
   {
    "name": "BotaB",
    "type": "views",
-   "front": "nico/frente.png",
-   "side": "nico/lado.png",
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#1e1e22",
    "colorTolerance": 0.06,
    "pickFront": [
@@ -172,13 +141,7 @@
   {
    "name": "Ojos",
    "type": "outline",
-   "image": "nico/frente.png",
    "inView": true,
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#1e1e22",
    "colorTolerance": 0.06,
    "pick": [
@@ -200,13 +163,7 @@
   {
    "name": "Botones",
    "type": "outline",
-   "image": "nico/frente.png",
    "inView": true,
-   "height": 0.12,
-   "exclude": [
-    "#3a3f4a"
-   ],
-   "excludeTolerance": 0.05,
    "color": "#966e1e",
    "colorTolerance": 0.08,
    "plane": "XY",

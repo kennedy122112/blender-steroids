@@ -43,14 +43,16 @@
    "roughness": 0.3
   }
  ],
+ "sheet": {
+  "front": "menta/frente.png",
+  "side": "menta/lado.png",
+  "height": 0.25,
+  "thin": 12
+ },
  "objects": [
   {
    "name": "Cuerpo",
    "type": "views",
-   "front": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "segments": 64,
    "material": "Menta",
    "smooth": true
@@ -68,10 +70,6 @@
   {
    "name": "OrejaArriba",
    "type": "stroke",
-   "image": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "material": "Menta",
    "smooth": true,
    "near": [
@@ -82,10 +80,6 @@
   {
    "name": "OrejaCaida",
    "type": "stroke",
-   "image": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "flat": 0.4,
    "material": "Menta",
    "smooth": true,
@@ -97,10 +91,6 @@
   {
    "name": "BrazoSaluda",
    "type": "stroke",
-   "image": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "location": [
     0,
     -0.008,
@@ -117,10 +107,6 @@
   {
    "name": "BrazoAdelante",
    "type": "stroke",
-   "image": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "material": "Menta",
    "smooth": true,
    "near": [
@@ -131,10 +117,6 @@
   {
    "name": "Patas",
    "type": "stroke",
-   "image": "menta/frente.png",
-   "side": "menta/lado.png",
-   "height": 0.25,
-   "thin": 12,
    "material": "Menta",
    "smooth": true,
    "near": [
@@ -151,10 +133,7 @@
   {
    "name": "Pompon",
    "type": "stroke",
-   "image": "menta/lado.png",
    "view": "side",
-   "height": 0.25,
-   "thin": 12,
    "blobs": true,
    "material": "Crema",
    "smooth": true
@@ -162,10 +141,7 @@
   {
    "name": "DentroA",
    "type": "outline",
-   "image": "menta/frente.png",
    "inView": true,
-   "height": 0.25,
-   "thin": 12,
    "color": "#f296aa",
    "pick": [
     0
@@ -184,10 +160,7 @@
   {
    "name": "DentroB",
    "type": "outline",
-   "image": "menta/frente.png",
    "inView": true,
-   "height": 0.25,
-   "thin": 12,
    "color": "#f296aa",
    "pick": [
     1
@@ -206,10 +179,7 @@
   {
    "name": "Cara",
    "type": "outline",
-   "image": "menta/frente.png",
    "inView": true,
-   "height": 0.25,
-   "thin": 12,
    "color": "#1c1a22",
    "plane": "XY",
    "thickness": 0.0008,
@@ -225,10 +195,7 @@
   {
    "name": "Brillos",
    "type": "outline",
-   "image": "menta/frente.png",
    "inView": true,
-   "height": 0.25,
-   "thin": 12,
    "color": "#ffffff",
    "colorTolerance": 0.06,
    "plane": "XY",

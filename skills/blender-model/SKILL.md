@@ -129,6 +129,9 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `camera` | `lens` (mm), `ortho` + `orthoScale`, `focus` (objeto o distancia) + `fstop`, `active` (por defecto sí) |
 | `empty` | `display` (plain_axes, arrows, cube…), `size` |
 
+Una clave que el código no usa (un error de tipeo como `excludeTolerence`) da un aviso con la más
+parecida («¿excludeTolerance?»): no la ignores, corrígela.
+
 Comunes a todos: `location` [m], `rotation` [grados XYZ], `scale`, `dimensions` (fuerza el tamaño final),
 `origin: "bottom"` (el origen en la base: así `location` z=0 lo apoya en el piso), `material` o
 `materials` + `faceMaterials` (índice por cara), `collection`, `parent` (la `location` que das es la del
@@ -231,6 +234,19 @@ dónde empieza y termina el cuerpo de frente (X) y de costado (Y): la sección e
 ese rectángulo (`roundness` 2; 3-4 para cajas redondeadas) o la forma de la vista de arriba (`top`).
 Así calza con las dos siluetas: un cuello que no está en el centro (la boca de una regadera) sale
 en su lugar, porque el centro de cada altura también se mide.
+
+**La hoja de vistas (`sheet`)**: todas las piezas que salen de las mismas dos imágenes tienen que
+medirse con el mismo marco (las imágenes, `height`, `thin`, `threshold`, `exclude`): si una difiere, queda
+desalineada sin aviso. Decláralo una vez arriba del spec y cada pieza lo hereda (lo que la pieza diga
+manda): `views` toma las dos imágenes; `stroke` y `outline` con `inView`, la de su `view`; y `stroke`,
+además, la otra vista para su profundidad (una pata que se ve de frente toma su posición de costado sin
+`location` a mano). Las dos imágenes se analizan una sola vez por build.
+
+```json
+"sheet": {"front": "nico/frente.png", "side": "nico/lado.png", "height": 0.12, "exclude": ["#3a3f4a"]},
+"objects": [{"name": "Cuerpo", "type": "views", "paint": {...}},
+            {"name": "Piernas", "type": "stroke", "color": "#3c5aa0"}, ...]
+```
 
 Las **partes finas** (lo que mide menos de `thin` % del alto de ancho: asas, picos, alambres, antenas,
 ramas, patas) no entran en el cuerpo: se hacen con `stroke` desde la imagen donde se ven a lo largo.

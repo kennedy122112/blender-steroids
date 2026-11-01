@@ -48,14 +48,16 @@
    "roughness": 0.2
   }
  ],
+ "sheet": {
+  "front": "lumo/frente.png",
+  "side": "lumo/lado.png",
+  "height": 0.3,
+  "thin": 12
+ },
  "objects": [
   {
    "name": "Cuerpo",
    "type": "views",
-   "front": "lumo/frente.png",
-   "side": "lumo/lado.png",
-   "height": 0.3,
-   "thin": 12,
    "segments": 64,
    "material": "Lila",
    "smooth": true
@@ -93,9 +95,6 @@
   {
    "name": "BrazoI",
    "type": "stroke",
-   "image": "lumo/frente.png",
-   "height": 0.3,
-   "thin": 12,
    "location": [
     0,
     -0.01,
@@ -104,7 +103,6 @@
    "material": "Lila",
    "smooth": true,
    "parent": "HombroI",
-   "side": "lumo/lado.png",
    "near": [
     0.094,
     0.086
@@ -113,9 +111,6 @@
   {
    "name": "BrazoD",
    "type": "stroke",
-   "image": "lumo/frente.png",
-   "height": 0.3,
-   "thin": 12,
    "location": [
     0,
     -0.01,
@@ -124,7 +119,6 @@
    "material": "Lila",
    "smooth": true,
    "parent": "HombroD",
-   "side": "lumo/lado.png",
    "near": [
     -0.094,
     0.086
@@ -133,12 +127,8 @@
   {
    "name": "Patas",
    "type": "stroke",
-   "image": "lumo/frente.png",
-   "height": 0.3,
-   "thin": 12,
    "material": "Lila",
    "smooth": true,
-   "side": "lumo/lado.png",
    "near": [
     [
      -0.033,
@@ -153,36 +143,25 @@
   {
    "name": "Orejas",
    "type": "stroke",
-   "image": "lumo/frente.png",
-   "height": 0.3,
-   "thin": 12,
    "color": "#68c48c",
    "material": "Hoja",
-   "smooth": true,
-   "side": "lumo/lado.png"
+   "smooth": true
   },
   {
    "name": "Cola",
    "type": "stroke",
-   "image": "lumo/lado.png",
    "view": "side",
-   "height": 0.3,
-   "thin": 12,
    "color": "#9676cc",
    "pick": 0,
    "material": "Lila",
    "smooth": true,
-   "parent": "BaseCola",
-   "front": "lumo/frente.png"
+   "parent": "BaseCola"
   },
   {
    "name": "HojaCola",
    "type": "outline",
-   "image": "lumo/lado.png",
    "inView": true,
    "view": "side",
-   "height": 0.3,
-   "thin": 12,
    "color": "#68c48c",
    "pick": [
     0
@@ -195,10 +174,7 @@
   {
    "name": "Cara",
    "type": "outline",
-   "image": "lumo/frente.png",
    "inView": true,
-   "height": 0.3,
-   "thin": 12,
    "color": "#1e1a28",
    "plane": "XY",
    "thickness": 0.001,
@@ -215,10 +191,7 @@
   {
    "name": "Brillos",
    "type": "outline",
-   "image": "lumo/frente.png",
    "inView": true,
-   "height": 0.3,
-   "thin": 12,
    "color": "#ffffff",
    "colorTolerance": 0.06,
    "plane": "XY",
@@ -236,10 +209,7 @@
   {
    "name": "Mejillas",
    "type": "outline",
-   "image": "lumo/frente.png",
    "inView": true,
-   "height": 0.3,
-   "thin": 12,
    "color": "#f08ca5",
    "plane": "XY",
    "thickness": 0.001,
@@ -256,10 +226,7 @@
   {
    "name": "Panza",
    "type": "outline",
-   "image": "lumo/frente.png",
    "inView": true,
-   "height": 0.3,
-   "thin": 12,
    "color": "#f2e6cc",
    "plane": "XY",
    "thickness": 0.001,

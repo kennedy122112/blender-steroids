@@ -30,13 +30,15 @@
    "roughness": 0.9
   }
  ],
+ "sheet": {
+  "front": "regadera/frente.png",
+  "side": "regadera/lado.png",
+  "height": 0.3
+ },
  "objects": [
   {
    "name": "Cuerpo",
    "type": "views",
-   "front": "regadera/frente.png",
-   "side": "regadera/lado.png",
-   "height": 0.3,
    "segments": 64,
    "material": "Chapa",
    "smooth": true
@@ -44,8 +46,6 @@
   {
    "name": "Asa",
    "type": "stroke",
-   "image": "regadera/frente.png",
-   "height": 0.3,
    "pick": [
     0
    ],
@@ -55,8 +55,6 @@
   {
    "name": "Pico",
    "type": "stroke",
-   "image": "regadera/frente.png",
-   "height": 0.3,
    "color": "#2f8f83",
    "pick": [
     1

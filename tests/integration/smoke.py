@@ -284,6 +284,12 @@ with open(ruta('fantasma.json'), 'w', encoding='utf-8') as f:
                             'color': '#00ff00', 'colorTolerance': 0.02}]}, f)
 r = cli('build', '--file', ruta('fantasma.blend'), '--spec', ruta('fantasma.json'))
 check('un error de build dice de qué objeto es', not r.get('ok') and '«Fantasma»' in (r.get('error') or ''), r.get('error'))
+with open(ruta('tipeo.json'), 'w', encoding='utf-8') as f:
+    json.dump({'objects': [{'name': 'Caja', 'type': 'cube', 'sise': 0.2, 'materail': 'X'}], 'animacion': []}, f)
+r = cli('build', '--file', ruta('tipeo.blend'), '--spec', ruta('tipeo.json'))
+avisos = ' | '.join(r.get('warnings') or [])
+check('una clave mal escrita avisa con la correcta', r.get('ok') and '¿size?' in avisos and '¿material?' in avisos
+      and '¿animation?' in avisos, avisos)
 
 # 10. figura de vinilo (Menta): patas cortas bajo un cuerpo redondo, partes elegidas por posición (near),
 #     un brazo casi horizontal que toma su profundidad de la otra vista y un pompón detectado como bola

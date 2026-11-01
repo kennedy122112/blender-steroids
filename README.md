@@ -1,7 +1,7 @@
 # blender-steroids
 
 <p align="center">
-  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.20.0-0a7bbb?style=for-the-badge">
+  <img alt="Versión" src="https://img.shields.io/badge/versi%C3%B3n-1.21.0-0a7bbb?style=for-the-badge">
   <a href="https://github.com/kennedy122112/blender-steroids/actions/workflows/tests.yml"><img alt="Pruebas" src="https://img.shields.io/github/actions/workflow/status/kennedy122112/blender-steroids/tests.yml?branch=main&label=pruebas&style=for-the-badge"></a>
   <img alt="Skills" src="https://img.shields.io/badge/skills-4-5fa500?style=for-the-badge">
   <img alt="Blender" src="https://img.shields.io/badge/Blender-4.2%20%C2%B7%205.x-e87d0d?style=for-the-badge&logo=blender&logoColor=white">
