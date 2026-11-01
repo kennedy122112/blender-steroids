@@ -241,7 +241,51 @@ r = cli('compare', '--file', ruta('pajaro.blend'), '--reference', os.path.join(R
 ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
 check('pájaro: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
 
-# 9. una entrada inválida no estropea el archivo
+# 9. personaje (Lumo): cabeza con brillos en los ojos, brazos y patas cortos con punta redonda, orejas de canto
+#    que toman su profundidad de la otra vista, cara pegada como un calco, y un error que dice de qué objeto es
+LUMO = """
+r = {}
+o = bpy.data.objects['Cara']
+r['cara'] = sorted(m.type for m in o.modifiers)
+r['sub'] = max([m.levels for m in o.modifiers if m.type == 'SUBSURF'] or [0])
+ys = [(bpy.data.objects['Orejas'].matrix_world @ v.co).y for v in bpy.data.objects['Orejas'].data.vertices]
+r['orejas_y'] = [round(min(ys), 4), round(sum(ys) / len(ys), 4), round(max(ys), 4)]
+s = bpy.context.scene
+h = bpy.data.objects['HombroI']
+s.frame_set(1)
+r['rot1'] = round(math.degrees(h.rotation_euler.y), 2)
+s.frame_set(5)
+r['rot5'] = round(math.degrees(h.rotation_euler.y), 2)
+result = r
+"""
+r = cli('build', '--file', ruta('lumo.blend'), '--spec', os.path.join(REPO, 'examples', 'lumo.json'))
+check('build personaje sin avisos', r.get('ok') and not r.get('warnings'), r.get('error') or r.get('warnings'))
+o = r.get('outlines') or {}
+c = o.get('Cuerpo') or {}
+check('personaje: cabeza y torso desde dos vistas', c.get('targetMet') and c.get('viewsMismatchPercent', 99) < 2, c)
+prof = {n: [t.get('depthFrom') for t in (o.get(n) or {}).get('strokes', []) if t['index'] in (o.get(n) or {}).get('picked', [])]
+        for n in ('Orejas', 'Patas', 'BrazoI')}
+check('personaje: orejas y patas con profundidad de la otra vista', all(x is not None for n in ('Orejas', 'Patas') for x in prof[n])
+      and prof['BrazoI'] == [None], prof)
+check('personaje: los brillos de los ojos por color', (o.get('Brillos') or {}).get('regions') == 2, o.get('Brillos'))
+l1 = cli('exec', '--file', ruta('lumo.blend'), '--script', script('lumo.py', LUMO)).get('result') or {}
+check('personaje: la cara subdividida y con las normales del cuerpo', l1.get('sub', 0) >= 1
+      and 'DATA_TRANSFER' in l1.get('cara', []) and 'SHRINKWRAP' in l1.get('cara', []), l1)
+check('personaje: orejas de canto e inclinadas hacia atrás', l1.get('orejas_y', [0, 0, 1])[1] > 0.002
+      and l1['orejas_y'][2] - l1['orejas_y'][0] < 0.03, l1)
+check('personaje: los brazos saludan desde el hombro', abs(l1.get('rot1', 9)) < 0.01 and abs(l1.get('rot5', 0)) > 5, l1)
+r = cli('compare', '--file', ruta('lumo.blend'), '--reference', os.path.join(REPO, 'examples', 'lumo', 'frente.png'),
+        '--view', 'front', '--reference', os.path.join(REPO, 'examples', 'lumo', 'lado.png'), '--view', 'right',
+        '--ortho', '--engine', 'workbench', '--frame', '1', '--path', ruta('lumo_cmp.png'))
+ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
+check('personaje: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
+with open(ruta('fantasma.json'), 'w', encoding='utf-8') as f:
+    json.dump({'objects': [{'name': 'Fantasma', 'type': 'outline', 'image': os.path.join(REPO, 'examples', 'lumo', 'frente.png'),
+                            'color': '#00ff00', 'colorTolerance': 0.02}]}, f)
+r = cli('build', '--file', ruta('fantasma.blend'), '--spec', ruta('fantasma.json'))
+check('un error de build dice de qué objeto es', not r.get('ok') and '«Fantasma»' in (r.get('error') or ''), r.get('error'))
+
+# 10. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],

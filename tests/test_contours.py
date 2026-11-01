@@ -499,5 +499,84 @@ class Pajaro(unittest.TestCase):
             C.outline(img, pick=[2])
 
 
+LILA, NEGRO, BLANCO = (0.59, 0.46, 0.8), (0.12, 0.1, 0.16), (1.0, 1.0, 1.0)
+
+
+def miembro(a, b, w, color=LILA):
+    """Un brazo o una pata: un tramo con la punta redonda (la mano, el pie), en dos capas (en una sola,
+    lo que se solapa se restaría)."""
+    return [([barra(a, b, w, w)], color), ([circulo(w / 2, b[0], b[1])], color)]
+
+
+class Personaje(unittest.TestCase):
+    """Prueba del personaje: brillos en los ojos, brazos y patas cortos con manos redondas, orejas de canto."""
+
+    def test_brillo_no_muerde_el_cuerpo(self):
+        # el brillo de un ojo se parece al fondo (un hueco chico); cerca del borde, al separar una antena,
+        # la apertura lo agrandaba y se comía el borde de la cabeza
+        img = pintar([([circulo(0.3)], LILA), ([barra((0, 0.29), (0, 0.45), 0.02, 0.02)], LILA),
+                      ([circulo(0.05, 0.2, 0.05)], NEGRO), ([circulo(0.012, 0.21, 0.06)], BLANCO)])
+        v = C._vista(img, 10)
+        dentro = (_cobertura([circulo(0.28)], 512) > 0.99) & ~(_cobertura([circulo(0.025, 0.21, 0.06)], 512) > 0)
+        self.assertGreater(v['cuerpo'][dentro].mean(), 0.999)
+        self.assertTrue(v['finos'].any())                               # la antena sí es fina
+
+    def test_brazos_y_patas_cortos(self):
+        capas = [([circulo(0.22, 0, 0.05)], LILA)]
+        for s in (-1, 1):
+            capas += miembro((s * 0.15, 0.12), (s * 0.33, 0.0), 0.055)                 # brazos
+            capas += miembro((s * 0.09, -0.12), (s * 0.1, -0.32), 0.065)               # patas
+        trazos, _ = C.strokes(pintar(capas), height=1.0, thin=12)
+        self.assertEqual(len(trazos), 4, [(t['length'], t['iou']) for t in trazos])
+        for t in trazos:
+            self.assertGreater(t['iou'], 0.85)
+            self.assertEqual(len(t['attached']), 1)                      # pegado al cuerpo, la mano libre
+            # recto, sin dar la vuelta en la mano redonda
+            ida = np.linalg.norm(np.subtract(t['end'], t['start']))
+            self.assertGreater(ida, 0.9 * t['length'])
+
+    def test_punta_redonda(self):
+        # la mano termina en un semicírculo: el radio cerca de la punta lo sigue (con pocos anillos era un cono)
+        capas = [([circulo(0.22)], LILA)] + miembro((0.18, 0.0), (0.4, 0.0), 0.08)
+        t = C.strokes(pintar(capas), height=1.0, thin=25)[0][0]
+        p, r = np.array(t['points']), np.array(t['radii'])
+        punta = p[-1] if t['attached'] == ['start'] else p[0]
+        d = np.linalg.norm(p - punta, axis=1)
+        R = max(r)
+        cerca = (d > 0.2 * R) & (d < 0.8 * R)
+        self.assertGreaterEqual(cerca.sum(), 3)
+        ideal = np.sqrt(np.maximum(2 * R * d[cerca] - d[cerca] ** 2, 0))
+        self.assertLess(np.abs(r[cerca] - ideal).max(), 0.15 * R)
+
+    def test_oreja_de_canto(self):
+        # una parte fina y chica (una oreja vista de canto) no es una astilla de esquina: sale del cuerpo
+        img = pintar([([circulo(0.25)], LILA), ([barra((0.02, 0.24), (0.04, 0.31), 0.015, 0.012)], LILA)])
+        z, _, _, v = C.view_profile(img, 10)
+        cima = (z.max() - 0) / v['alto']
+        self.assertLess(cima, 0.5 / 0.56 + 0.02)                         # el cuerpo termina en la cabeza
+        self.assertEqual(len(C.strokes(img, thin=10)[0]), 1)
+
+    def test_brillo_por_color(self):
+        # el brillo se parece al fondo pero lo encierra la figura: es parte de ella, y es chico a propósito
+        img = pintar([([circulo(0.3)], LILA), ([circulo(0.06, 0.1, 0.05)], NEGRO), ([circulo(0.012, 0.11, 0.06)], BLANCO)])
+        regs, info = C.outline(img, color='#ffffff', color_tol=0.06)
+        self.assertEqual(info['regions'], 1)
+        self.assertAlmostEqual(info['size'][0], 1.0)
+        # un hueco grande sigue siendo fondo (entre unas patas y la rama): un anillo no toma su agujero
+        anillo = pintar([([circulo(0.3), circulo(0.15)[::-1]], LILA)])
+        with self.assertRaises(ValueError):
+            C.outline(anillo, color='#e6e0d4', color_tol=0.05)
+
+    def test_rama_sin_bulto(self):
+        # donde nace la pata, el ancho medido de la rama incluye el de la pata: no queda un bulto
+        img = pintar([([circulo(0.2, 0, 0.15)], VERDE), ([rect(-0.45, -0.32, 0.45, -0.25)], (0.47, 0.32, 0.2)),
+                      ([rect(-0.03, -0.25, 0.03, -0.03)], (0.93, 0.55, 0.16))])
+        trazos, _ = C.strokes(img, height=1.0)
+        rama = trazos[0]
+        self.assertNotIn('parent', rama)
+        r = np.array(rama['radii'])
+        self.assertLess(r.max(), 1.1 * np.median(r))
+
+
 if __name__ == '__main__':
     unittest.main()
