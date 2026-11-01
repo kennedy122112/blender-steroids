@@ -222,7 +222,7 @@ El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-mo
 | `tests/` | Pruebas de contornos y de movimiento: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
 | `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
-| `skills/` | Las cuatro skills (`SKILL.md`) |
+| `skills/` | Las cuatro skills (`SKILL.md`; las técnicas largas de `blender-model` en sus `references/`) |
 | `install.ps1`, `install.sh` | Instalador para todos los agentes (Windows, macOS/Linux) |
 
 ### Notas de la API de Blender aprendidas (5.2)
