@@ -16,51 +16,13 @@ import traceback
 from mathutils import Euler, Matrix, Vector
 from mathutils.geometry import tessellate_polygon
 
+from . import formato, mascaras, vistas
+from .formato import color, hexcolor, r3, srgb, vec3
+
 # ----------------------------------------------------------------------------------- utilidades
 
 def _scene():
     return bpy.context.scene or bpy.data.scenes[0]
-
-
-def _lin(c):
-    # sRGB (lo que se ve en un selector de color) -> lineal (lo que guardan los nodos y las luces)
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def _srgb(c):
-    c = max(0.0, min(1.0, c))
-    return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
-
-
-def color(v, alpha=1.0):
-    """'#rrggbb', '#rgb', '#rrggbbaa' o [r, g, b(, a)] en 0-1 sRGB -> RGBA lineal."""
-    if isinstance(v, str):
-        h = v.strip().lstrip('#')
-        if len(h) in (3, 4):
-            h = ''.join(ch * 2 for ch in h)
-        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
-        a = int(h[6:8], 16) / 255 if len(h) == 8 else alpha
-    else:
-        r, g, b = v[:3]
-        a = v[3] if len(v) > 3 else alpha
-    return (_lin(r), _lin(g), _lin(b), a)
-
-
-def hexcolor(c):
-    return '#' + ''.join('%02x' % round(_srgb(x) * 255) for x in c[:3])
-
-
-def vec3(v, default=(0.0, 0.0, 0.0)):
-    if v is None:
-        return tuple(default)
-    if isinstance(v, (int, float)):
-        return (float(v),) * 3
-    v = list(v)
-    return tuple(float(x) for x in (v + list(default)[len(v):])[:3])
-
-
-def r3(v, n=4):
-    return [round(x, n) for x in v]
 
 
 def _ctx():
@@ -85,20 +47,6 @@ def _set_engine(scene, name):
         except TypeError:
             continue
     raise ValueError('Motor de render desconocido: %s (usa eevee, cycles o workbench)' % name)
-
-
-def _snake(k):
-    return ''.join('_' + c.lower() if c.isupper() else c for c in k)
-
-
-def _path(p, base_dir):
-    """Rutas de imágenes del spec: relativas a la carpeta del spec."""
-    p = os.path.expanduser(p)
-    if not os.path.isabs(p) and base_dir:
-        p = os.path.join(base_dir, p)
-    if not os.path.exists(p):
-        raise FileNotFoundError('No existe la imagen %s' % p)
-    return p
 
 
 def _obj(name, required=True):
@@ -242,80 +190,10 @@ def op_scene(args):
 
 # ----------------------------------------------------------------------------------- geometría
 
-GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 'subdivisions',
-             'majorRadius', 'minorRadius', 'minorSegments', 'fill', 'vertices', 'edges', 'faces',
-             'origin', 'xSegments', 'ySegments', 'points', 'radii', 'flat', 'cap', 'profile', 'roundness',
-             'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
-             'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
-             'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance', 'front', 'top',
-             'thin', 'view', 'pick', 'inView', 'blobs', 'near', 'exclude', 'excludeTolerance', 'paint',
-             'pickFront', 'pickSide', 'paintRefine')
-
-PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
-              'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
-              'outline', 'views', 'stroke'}
 
 # build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
 # lathe con imagen, y su fuente para guardarla en el objeto
 _BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': [], 'viewAt': {}, 'pixels': {}}
-_CLAVES = set()
-
-
-def _claves_conocidas():
-    """Las claves que el código lee de un spec (`x.get('clave')`, `x['clave']`), sacadas de este mismo
-    archivo: así no hay una lista que mantener aparte. Una clave que no está es casi siempre un error de
-    tipeo que se ignoraría en silencio."""
-    import re
-    if not _CLAVES:
-        with open(__file__, encoding='utf-8') as f:
-            src = f.read()
-        _CLAVES.update(re.findall(r"\.get\('([A-Za-z][A-Za-z0-9_]*)'", src))
-        _CLAVES.update(re.findall(r"\['([A-Za-z][A-Za-z0-9_]*)'\]", src))
-        _CLAVES.update(GEOM_KEYS)
-    return _CLAVES
-
-
-def _claves_raras(d, donde, warnings):
-    """Avisa de las claves de `d` que el código no lee, con la más parecida que sí lee."""
-    import difflib
-    conocidas = _claves_conocidas()
-    for k in d:
-        if k.startswith('_') or k in conocidas:
-            continue
-        cerca = difflib.get_close_matches(k, conocidas, 1, 0.75)
-        warnings.append('%s: «%s» no es una clave que se use%s; se ignora'
-                        % (donde, k, ' (¿%s?)' % cerca[0] if cerca else ''))
-
-
-# lo que una pieza toma de la hoja de vistas si no lo dice ella: todas las piezas de una misma hoja
-# tienen que medirse con el mismo marco (alto, ancho de parte fina, lo que no es figura) para encajar
-_HOJA_COMUNES = ('height', 'thin', 'threshold', 'exclude', 'excludeTolerance')
-
-
-def _con_hoja(os_, hoja):
-    """El objeto completado con la hoja de vistas del spec (`sheet`: {"front", "side", "height", "thin",
-    "threshold", "exclude", "excludeTolerance"}): `views` toma las dos imágenes; `stroke` y `outline`
-    con `inView`, la imagen de su `view` (y `stroke`, la otra vista para su profundidad); y todas, lo
-    común que no digan. Lo que el objeto dice manda."""
-    t = str(os_.get('type', '')).lower()
-    if not hoja or not (t in ('views', 'stroke') or (t == 'outline' and os_.get('inView'))):
-        return os_
-    o = dict(os_)
-    for k in _HOJA_COMUNES:
-        if k in hoja and k not in o:
-            o[k] = hoja[k]
-    if t == 'views':
-        for k in ('front', 'side'):
-            if k not in o and hoja.get(k):
-                o[k] = hoja[k]
-        return o
-    vista = str(o.get('view', 'front')).lower()
-    otra = 'side' if vista == 'front' else 'front'
-    if 'image' not in o and hoja.get(vista):
-        o['image'] = hoja[vista]
-    if t == 'stroke' and otra not in o and hoja.get(otra) and o.get('image') == hoja.get(vista):
-        o[otra] = hoja[otra]
-    return o
 
 
 def _fit(bm, target):
@@ -575,67 +453,6 @@ def _pintar_vistas(bm, o, fr, sd, marcos):
     return cuenta
 
 
-def _profundidad(t, otros):
-    """La parte de la otra vista que ocupa las mismas alturas que el trazo t (casi el mismo tramo de z, y
-    que sube o baja sin volver): en cada punto de t su centro en la otra vista, y cuánto más fino o
-    grueso es ahí (la mediana de sus radios sobre la de t). None si ninguna calza."""
-    import numpy as np
-    z = np.array(t['points'])[:, 1]
-
-    def puntas(tr):
-        """Altura de la punta pegada al cuerpo y de la libre (o la más baja y la más alta)."""
-        zz = np.array(tr['points'])[:, 1]
-        if tr['attached'] == ['start']:
-            return zz[0], zz[-1]
-        if tr['attached'] == ['end']:
-            return zz[-1], zz[0]
-        return zz.min(), zz.max()
-
-    def largo(tr):
-        return float(np.linalg.norm(np.diff(np.array(tr['points']), axis=0), axis=1).sum())
-    mejor, solape_max = None, 0.6
-    for j, u in enumerate(otros):
-        q = np.array(u['points'])
-        zq = q[:, 1]
-        dz = np.diff(zq)
-        if len(dz) < 2 or max((dz > 0).mean(), (dz < 0).mean()) < 0.9:
-            continue                                        # vuelve sobre sí misma: no se lee por altura
-        # la misma parte se pega al cuerpo y termina a las mismas alturas en las dos vistas (una cola y
-        # un brazo pueden solaparse en altura y no ser la misma cosa)
-        if max(abs(a_ - b_) for a_, b_ in zip(puntas(t), puntas(u))) > 0.3 * max(largo(t), largo(u)):
-            continue
-        solape = min(z.max(), zq.max()) - max(z.min(), zq.min())
-        solape /= max(z.max() - z.min(), zq.max() - zq.min(), 1e-9)
-        if solape > solape_max:
-            mejor, solape_max = j, solape
-    if mejor is None:
-        return None
-    u = otros[mejor]
-    q = np.array(u['points'])
-    orden = np.argsort(q[:, 1])
-    rq, rt = np.array(u['radii']), np.array(t['radii'])
-    dentro = (z >= q[:, 1].min()) & (z <= q[:, 1].max())
-    ratio = float(np.median(rq)) / max(float(np.median(rt[dentro] if dentro.any() else rt)), 1e-9)
-    centro = np.interp(z, q[orden, 1], q[orden, 0])
-
-    def fraccion(tr):
-        """Fracción del largo de cada punto, desde la punta pegada al cuerpo."""
-        pp = np.array(tr['points'])
-        s_ = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pp, axis=0), axis=1))])
-        s_ = s_ / max(s_[-1], 1e-12)
-        return 1 - s_ if tr['attached'] == ['end'] else s_
-    # una parte casi horizontal (un brazo estirado hacia adelante) casi no cambia de altura: por altura,
-    # un poco de diferencia entre las vistas lleva a otro punto del brazo. Se empareja por la fracción del
-    # largo desde donde se pega al cuerpo
-    pt = np.array(t['points'])
-    largo_t = float(np.linalg.norm(np.diff(pt, axis=0), axis=1).sum())
-    if np.ptp(z) < 0.5 * largo_t and len(t['attached']) == 1 and len(u['attached']) == 1:
-        su = fraccion(u)
-        o_ = np.argsort(su)
-        centro = np.interp(fraccion(t), su[o_], q[o_, 0])
-    return {'indice': mejor, 'ratio': ratio, 'centro': centro.tolist()}
-
-
 def _stroke_bolas(bm, o, name, info, ruta):
     """stroke con `blobs: true`: las partes redondas de la vista (un pompón, un botón, una nariz de bola)
     como esferas, con el centro y el radio del círculo que sigue su borde."""
@@ -708,7 +525,7 @@ def _stroke(bm, o, name):
     for i in idx:
         t = trazos[i]
         pts = [(x, 0.0, z) if lado == 'front' else (0.0, x, z) for x, z in t['points']]
-        hondo = _profundidad(t, otros)
+        hondo = vistas.profundidad(t, otros)
         n0 = len(bm.verts)
         _tube(bm, {'points': pts, 'radii': t['radii'], 'segments': seg})
         bm.verts.ensure_lookup_table()
@@ -836,7 +653,7 @@ def _membrane(bm, o):
 
 def _image_px(o, clave='image'):
     """Imagen de outline/lathe/views/stroke (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
-    ruta = _path(o[clave], _BUILD['baseDir'])
+    ruta = formato.ruta(o[clave], _BUILD['baseDir'])
     # varias piezas salen de la misma hoja: se lee una vez por build (de solo lectura: nadie la toca)
     llave = (ruta, os.path.getmtime(ruta))
     if llave not in _BUILD['pixels']:
@@ -873,7 +690,7 @@ def _record(name, o, info, ruta=None, otras=()):
         res['loops'] = [dict(l, **({'coefficients': c['_coef']} if '_coef' in c else {}))
                         for l, c in zip(pub['loops'], info['loops'])]
     fuente = {'generator': o.get('type'), 'version': VERSION,
-              'params': {k: o[k] for k in GEOM_KEYS if k in o and k not in ('image', 'profile')
+              'params': {k: o[k] for k in formato.GEOM_KEYS if k in o and k not in ('image', 'profile')
                          and not (o.get('type') in ('views', 'stroke') and k in ('front', 'side', 'top'))},
               'result': res}
     for clave, r in [('image', ruta)] + list(otras):
@@ -986,7 +803,7 @@ def _outline_curve(o, name):
 
 
 def _geom_data(o, name):
-    """Geometría de un tipo de PRIMITIVES: malla, o curva para outline con output curve."""
+    """Geometría de un tipo de formato.PRIMITIVES: malla, o curva para outline con output curve."""
     if o.get('type', '').lower() == 'outline' and o.get('output') == 'curve':
         return _outline_curve(o, name)
     return build_mesh(o, name)
@@ -1139,10 +956,6 @@ def build_mesh(o, name):
     return me
 
 
-def _geom_sig(o):
-    return json.dumps({k: o[k] for k in GEOM_KEYS if k in o}, sort_keys=True)
-
-
 # ----------------------------------------------------------------------------------- materiales
 
 def _socket(node, *names):
@@ -1168,7 +981,7 @@ def _texture_maps(m, p, maps, base_dir, scale):
     def imagen(clave, no_color):
         tex = nt.nodes.new('ShaderNodeTexImage')
         tex.label = 'bs_map_' + clave
-        tex.image = bpy.data.images.load(_path(maps[clave], base_dir), check_existing=True)
+        tex.image = bpy.data.images.load(formato.ruta(maps[clave], base_dir), check_existing=True)
         if no_color:
             tex.image.colorspace_settings.name = 'Non-Color'
         tex.projection, tex.projection_blend = 'BOX', 0.25
@@ -1300,7 +1113,7 @@ def build_material(spec, base_dir):
     if spec.get('pixels'):
         _pixel_texture(m, p, spec['name'], spec['pixels'], float(spec.get('emissionStrength', 0.0)))
     if spec.get('texture'):
-        path = _path(spec['texture'], base_dir)
+        path = formato.ruta(spec['texture'], base_dir)
         tex =next((n for n in nt.nodes if n.type == 'TEX_IMAGE' and n.label == 'bs_texture'), None)
         if tex is None:
             tex = nt.nodes.new('ShaderNodeTexImage')
@@ -1336,7 +1149,7 @@ def _move_to(o, coll):
 
 def _new_object(spec, name):
     t = spec.get('type', 'cube').lower()
-    if t in PRIMITIVES:
+    if t in formato.PRIMITIVES:
         return bpy.data.objects.new(name, _geom_data(spec, name)), _geom_kind(t, spec)
     if t == 'empty':
         o = bpy.data.objects.new(name, None)
@@ -1676,7 +1489,7 @@ def _apply_modifiers(o, specs, warnings):
             if k == 'mirrorObject':
                 m.mirror_object = _obj(v)
                 continue
-            attr = _snake(k)
+            attr = formato.snake(k)
             if not hasattr(m, attr):
                 warnings.append('«%s»: el modificador %s no tiene «%s»' % (o.name, mtype, k))
                 continue
@@ -1889,7 +1702,7 @@ def _apply_scene(cfg, warnings, base_dir=None):
         if w.get('hdri'):
             env = nt.nodes.get('bs_hdri') or nt.nodes.new('ShaderNodeTexEnvironment')
             env.name = 'bs_hdri'
-            env.image = bpy.data.images.load(_path(w['hdri'], base_dir), check_existing=True)
+            env.image = bpy.data.images.load(formato.ruta(w['hdri'], base_dir), check_existing=True)
             nt.links.new(env.outputs['Color'], bg.inputs['Color'])
 
 
@@ -1913,9 +1726,9 @@ def op_build(spec):
     _BUILD['outlines'] = {}
     _BUILD['viewAt'] = {}
     _BUILD['pixels'] = {}
-    _claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', warnings)
+    formato.claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', warnings)
     for os_ in spec.get('objects', []):
-        _claves_raras(os_, '«%s»' % os_.get('name', '?'), warnings)
+        formato.claves_raras(os_, '«%s»' % os_.get('name', '?'), warnings)
     _BUILD['sources'] = {}
     _BUILD['motions'] = []
 
@@ -1946,7 +1759,7 @@ def op_build(spec):
     # 1ª pasada: crear/actualizar cada objeto con su geometría, transformación y material
     objs = []
     for os_ in spec.get('objects', []):
-        os_ = _con_hoja(os_, spec.get('sheet'))
+        os_ = formato.con_hoja(os_, spec.get('sheet'))
         name = os_['name']
         o = bpy.data.objects.get(name)
         t = os_.get('type', '').lower()
@@ -1954,30 +1767,30 @@ def op_build(spec):
             # Un objeto existente conserva su malla salvo que el spec traiga parámetros de geometría:
             # así se le pueden cambiar material, posición o modificadores sin rehacerlo.
             if t:
-                want = _geom_kind(t, os_) if t in PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
+                want = _geom_kind(t, os_) if t in formato.PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
                 if o.type != want and t == 'outline' and {o.type, want} == {'MESH', 'CURVE'}:
                     o = _replace_object(o, os_, name, warnings)
-                    o['bs_geom'] = _geom_sig(os_)
+                    o['bs_geom'] = formato.geom_sig(os_)
                     replaced.append(name)
                 elif o.type != want:
                     warnings.append('«%s» ya existe y es %s, no %s: se omite' % (name, o.type, want))
                     continue
-            if t in PRIMITIVES and any(k in os_ for k in GEOM_KEYS if k != 'type') \
-                    and o.get('bs_geom') != _geom_sig(os_):
+            if t in formato.PRIMITIVES and any(k in os_ for k in formato.GEOM_KEYS if k != 'type') \
+                    and o.get('bs_geom') != formato.geom_sig(os_):
                 old = o.data
                 o.data = _con_nombre(name, _geom_data, os_, name)
                 for m in old.materials:
                     o.data.materials.append(m)
                 if old.users == 0:
                     (bpy.data.meshes if isinstance(old, bpy.types.Mesh) else bpy.data.curves).remove(old)
-                o['bs_geom'] = _geom_sig(os_)
+                o['bs_geom'] = formato.geom_sig(os_)
             updated.append(name)
         else:
             t = t or 'cube'
             os_ = dict(os_, type=t)
             o, _ = _con_nombre(name, _new_object, os_, name)
-            if t in PRIMITIVES:
-                o['bs_geom'] = _geom_sig(os_)
+            if t in formato.PRIMITIVES:
+                o['bs_geom'] = formato.geom_sig(os_)
             created.append(name)
         o['bs_spec'] = 1
         if os_.get('collection') or not o.users_collection:
@@ -2271,124 +2084,6 @@ def _resize(px, w, h):
     return out.reshape(nh, nw, 4)
 
 
-def _subject_mask(px, holes='fill'):
-    """Figura de la referencia: lo que se aparta del color de fondo (la mediana del borde, por fila), sin
-    líneas sueltas (cuadrícula del visor, gizmos) ni recortes de la interfaz. Conserva las partes finas
-    y separadas de una misma fila (dientes, cuernos, dedos, brazos sueltos del torso). Los huecos
-    cerrados se tapan con holes='fill' (la zona del mismo color que el fondo, p. ej. una barriga blanca
-    sobre fondo blanco, no se confunde con un agujero) o se conservan con holes='keep'."""
-    import numpy as np
-    if px[..., 3].min() < 0.5:                     # imagen con transparencia: el alfa ya es la figura
-        return _holes(_largest_component(px[..., 3] > 0.5), holes)
-    h, w = px.shape[:2]
-    # fondo por fila (los visores y estudios suelen tener degradado vertical): mediana de los bordes
-    b = max(4, w // 40)
-    borde = np.concatenate([px[:, :b, :3], px[:, -b:, :3]], axis=1)
-    fondo = np.median(borde, axis=1)                                   # (h, 3)
-    ruido = np.abs(borde - fondo[:, None]).max(axis=2)
-    m = np.abs(px[..., :3] - fondo[:, None]).max(axis=2) > max(0.035, float(np.percentile(ruido, 95)) * 1.5)
-    # fuera las líneas de 1-2 px (cuadrícula, gizmos) y lo que no está unido a la figura
-    return _holes(_largest_component(_opening(m)), holes)
-
-
-def _dilate(m, n=1):
-    """Dilatación con una cruz 3x3, n veces."""
-    for _ in range(n):
-        d = m.copy()
-        d[1:] |= m[:-1]
-        d[:-1] |= m[1:]
-        d[:, 1:] |= m[:, :-1]
-        d[:, :-1] |= m[:, 1:]
-        m = d
-    return m
-
-
-def _erode(m, n=1):
-    return ~_dilate(~m, n)
-
-
-def _opening(m):
-    """Erosión y dilatación con una cruz 3x3: borra líneas de hasta 2 px y deja intacto lo demás."""
-    return _dilate(_erode(m)) & m
-
-
-def _filled(m):
-    """La silueta con sus huecos cerrados tapados: se rellena cada contorno exterior por separado, así
-    una isla dentro de un hueco no vacía a su contenedor."""
-    from . import contours
-    out = m.copy()
-    for r in contours.regions(contours.trace(m.astype('float64'))):
-        out |= contours.rasterize([r['outer'] * [1, -1]], m.shape, (0.0, 0.0), 1.0)
-    return out
-
-
-def _holes(m, mode='fill'):
-    """Tapa los huecos de una silueta (mode='fill') o la deja como está ('keep'). Además de los huecos
-    cerrados, tapa las zonas interiores que solo se abren al fondo por una rendija de hasta ~6 px (una
-    parte del mismo color que el fondo pegada al borde), sin rellenar las muescas del contorno."""
-    if mode == 'keep' or not m.any():
-        return m
-    if mode != 'fill':
-        raise ValueError('holes debe ser fill o keep')
-    cerrado = _erode(_dilate(m, 3), 3)
-    interior = _filled(cerrado) & ~cerrado
-    rendijas = cerrado & ~m & _dilate(interior)
-    return _filled(m) | interior | rendijas
-
-
-def _largest_component(m, keep=0.1):
-    """Se queda con la región conectada más grande y con las que miden al menos `keep` de ella (una
-    figura con partes sueltas), sin iconos ni botones chicos (en una versión reducida, para ir rápido)."""
-    import numpy as np
-    from collections import deque
-    h, w = m.shape
-    k = max(1, int(math.ceil(max(h, w) / 240)))
-    hh, ww = int(math.ceil(h / k)), int(math.ceil(w / k))
-    pad = np.zeros((hh * k, ww * k), bool)
-    pad[:h, :w] = m
-    small = pad.reshape(hh, k, ww, k).any(axis=(1, 3))
-    lab = np.zeros(small.shape, np.int32)
-    tam, n = {}, 0
-    for y0, x0 in zip(*np.nonzero(small)):
-        if lab[y0, x0]:
-            continue
-        n += 1
-        lab[y0, x0] = n
-        q, c = deque([(y0, x0)]), 0
-        while q:
-            y, x = q.popleft()
-            c += 1
-            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                yy, xx = y + dy, x + dx
-                if 0 <= yy < hh and 0 <= xx < ww and small[yy, xx] and not lab[yy, xx]:
-                    lab[yy, xx] = n
-                    q.append((yy, xx))
-        tam[n] = c
-    if not tam:
-        return m
-    mayor = max(tam.values())
-    grandes = [n_ for n_, c in tam.items() if c >= keep * mayor]
-    quedan = np.repeat(np.repeat(np.isin(lab, grandes), k, axis=0), k, axis=1)[:h, :w]
-    return m & quedan
-
-
-def _bbox(mask):
-    import numpy as np
-    ys, xs = np.nonzero(mask)
-    if len(ys) == 0:
-        return None
-    # recorte del 0.5 % para no depender de un píxel suelto
-    return (int(np.percentile(xs, 0.5)), int(np.percentile(ys, 0.5)),
-            int(np.percentile(xs, 99.5)), int(np.percentile(ys, 99.5)))
-
-
-def _edges(mask):
-    import numpy as np
-    e = np.zeros_like(mask)
-    e[1:-1, 1:-1] = mask[1:-1, 1:-1] & ~(mask[:-2, 1:-1] & mask[2:, 1:-1] & mask[1:-1, :-2] & mask[1:-1, 2:])
-    return e | np.roll(e, 1, 0) | np.roll(e, 1, 1)
-
-
 def op_compose(args):
     """Referencia | render alineado | siluetas superpuestas, con guías cada 10 % del alto de la figura.
     El render se escala y se mueve para que su figura ocupe la misma caja que la de la referencia
@@ -2399,16 +2094,16 @@ def op_compose(args):
     holes = args.get('holes', 'fill')
     ref = _load_pixels(args['reference'], h)
     ren = _load_pixels(args['render'])
-    rmask = _subject_mask(ref, holes)
-    rb = _bbox(rmask)
+    rmask = mascaras.subject_mask(ref, holes)
+    rb = mascaras.bbox(rmask)
     gmask_full = ren[..., 3] > 0.5
-    gb = _bbox(gmask_full)
+    gb = mascaras.bbox(gmask_full)
     info = {}
     if args.get('align', True) and rb and gb:
         k = (rb[3] - rb[1] + 1) / (gb[3] - gb[1] + 1)
         ren = _resize(ren, round(ren.shape[1] * k), round(ren.shape[0] * k))
         gmask_full = ren[..., 3] > 0.5
-        gb = _bbox(gmask_full)
+        gb = mascaras.bbox(gmask_full)
         canvas = np.zeros((h, ref.shape[1], 4), dtype=np.float32)
         dx = round((rb[0] + rb[2]) / 2 - (gb[0] + gb[2]) / 2)
         dy = rb[1] - gb[1]                              # misma base (filas de abajo arriba)
@@ -2418,8 +2113,8 @@ def op_compose(args):
         info['scale'] = round(k, 3)
     elif ren.shape[0] != h:
         ren = _resize(ren, round(ren.shape[1] * h / ren.shape[0]), h)
-    gmask = _holes(ren[..., 3] > 0.5, holes)
-    gb = _bbox(gmask)
+    gmask = mascaras.fill_holes(ren[..., 3] > 0.5, holes)
+    gb = mascaras.bbox(gmask)
     # el render va sobre gris medio; la referencia, si era transparente, sobre blanco
     a = ren[..., 3:4]
     ren[..., :3] = ren[..., :3] * a + 0.35 * (1 - a)
@@ -2432,8 +2127,8 @@ def op_compose(args):
     if args.get('overlay', True) and rb and gb:
         ov = ref.copy()
         ov[..., :3] = ov[..., :3] * 0.45 + 0.3
-        ov[_edges(rmask), :3] = (0.0, 0.85, 1.0)      # cian: referencia
-        ov[_edges(gmask), :3] = (1.0, 0.2, 0.75)      # magenta: render
+        ov[mascaras.edges(rmask), :3] = (0.0, 0.85, 1.0)      # cian: referencia
+        ov[mascaras.edges(gmask), :3] = (1.0, 0.2, 0.75)      # magenta: render
         paneles.append(ov)
     gap = 12
     W = sum(p.shape[1] for p in paneles) + gap * (len(paneles) - 1)
@@ -2478,31 +2173,6 @@ def op_compose(args):
     return res
 
 
-def _mask_crop(mask, h):
-    """Silueta recortada a su caja y escalada (vecino más cercano) a la altura h."""
-    import numpy as np
-    b = _bbox(mask)
-    if not b:
-        return None
-    m = mask[b[1]:b[3] + 1, b[0]:b[2] + 1]
-    w = max(1, round(m.shape[1] * h / m.shape[0]))
-    ys = (np.arange(h) * m.shape[0] / h).astype(int)
-    xs = (np.arange(w) * m.shape[1] / w).astype(int)
-    return m[ys][:, xs]
-
-
-def _iou_aligned(a, b):
-    """IoU de dos siluetas ya escaladas a la misma altura, centradas en x."""
-    import numpy as np
-    W = max(a.shape[1], b.shape[1])
-    A = np.zeros((a.shape[0], W), bool)
-    B = np.zeros((b.shape[0], W), bool)
-    A[:, (W - a.shape[1]) // 2:(W - a.shape[1]) // 2 + a.shape[1]] = a
-    B[:, (W - b.shape[1]) // 2:(W - b.shape[1]) // 2 + b.shape[1]] = b
-    u = (A | B).sum()
-    return float((A & B).sum() / u) if u else 0.0
-
-
 def _fit_view(args, ref_mask):
     """Prueba ángulos de cámara (azimut y elevación) con renders rápidos de silueta y devuelve la
     dirección cuya silueta se parece más a la de la referencia."""
@@ -2511,7 +2181,7 @@ def _fit_view(args, ref_mask):
     guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
                 s.render.film_transparent, s.camera, s.render.filepath)
     H = 160
-    ref_c = _mask_crop(ref_mask, H)
+    ref_c = mascaras.crop(ref_mask, H)
     rw = s.render.resolution_x * 220 / s.render.resolution_y
     s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = max(16, round(rw)), 220, 100
     _set_engine(s, 'workbench')
@@ -2534,8 +2204,8 @@ def _fit_view(args, ref_mask):
                 s.render.filepath = tmp
                 bpy.ops.render.render(write_still=True)
                 px = _load_pixels(tmp)
-                m = _mask_crop(_holes(px[..., 3] > 0.5, args.get('holes', 'fill')), H)
-                iou = _iou_aligned(ref_c, m) if m is not None else 0.0
+                m = mascaras.crop(mascaras.fill_holes(px[..., 3] > 0.5, args.get('holes', 'fill')), H)
+                iou = mascaras.iou_aligned(ref_c, m) if m is not None else 0.0
                 pruebas.append((iou, az, el, d))
     finally:
         bpy.data.objects.remove(cam, do_unlink=True)
@@ -2556,7 +2226,7 @@ def _z_by_guide(render_path, objs_names):
     from bpy_extras.object_utils import world_to_camera_view
     s = _scene()
     px = _load_pixels(render_path)
-    b = _bbox(px[..., 3] > 0.5)
+    b = mascaras.bbox(px[..., 3] > 0.5)
     cam = s.camera
     if not b or cam is None:
         return None, None
@@ -2621,7 +2291,7 @@ def op_compare(args):
                 ocultos.append(o)
     try:
         if args.get('fitView'):
-            fit = _fit_view(args, _subject_mask(_load_pixels(os.path.abspath(args['reference']), 400),
+            fit = _fit_view(args, mascaras.subject_mask(_load_pixels(os.path.abspath(args['reference']), 400),
                                                 args.get('holes', 'fill')))
             args = dict(args, view=fit['view'])
         # transparente: así la figura del render se separa del fondo sin adivinar
@@ -2654,54 +2324,10 @@ def _palette():
             m = slot.material
             if m is None:
                 continue
-            c = tuple(round(_srgb(x), 3) for x in m.diffuse_color[:3])
+            c = tuple(round(srgb(x), 3) for x in m.diffuse_color[:3])
             if c not in [v[1] for v in vistos]:
                 vistos.append((m.name, c))
     return [v[0] for v in vistos], np.array([v[1] for v in vistos], dtype=np.float32)
-
-
-def _classify(px, mask, pal):
-    """Asigna cada píxel de la figura al color de la paleta más parecido, sin depender del brillo
-    (la referencia tiene luz y sombra; el render de ajuste es plano)."""
-    import numpy as np
-    rgb = px[..., :3]
-    val = rgb.max(axis=2)
-    nrm = rgb / (val[..., None] + 0.06)
-    pv = pal.max(axis=1)
-    pn = pal / (pv[:, None] + 0.06)
-    d = ((nrm[..., None, :] - pn[None, None]) ** 2).sum(axis=3) + 0.35 * (val[..., None] - pv[None, None]) ** 2
-    lab = d.argmin(axis=2).astype(np.int16)
-    lab[~mask] = -1
-    return lab
-
-
-def _crop_labels(lab, mask, h):
-    """Etiquetas recortadas a la caja de la figura y escaladas (vecino más cercano) a la altura h."""
-    import numpy as np
-    b = _bbox(mask)
-    if not b:
-        return None
-    m = lab[b[1]:b[3] + 1, b[0]:b[2] + 1]
-    w = max(1, round(m.shape[1] * h / m.shape[0]))
-    ys = (np.arange(h) * m.shape[0] / h).astype(int)
-    xs = (np.arange(w) * m.shape[1] / w).astype(int)
-    return m[ys][:, xs]
-
-
-def _iou_classes(a, b, clases):
-    """IoU de cada clase entre dos mapas de etiquetas ya escalados a la misma altura, centrados en x."""
-    import numpy as np
-    W = max(a.shape[1], b.shape[1])
-    A = np.full((a.shape[0], W), -1, np.int16)
-    B = np.full((b.shape[0], W), -1, np.int16)
-    A[:, (W - a.shape[1]) // 2:(W - a.shape[1]) // 2 + a.shape[1]] = a
-    B[:, (W - b.shape[1]) // 2:(W - b.shape[1]) // 2 + b.shape[1]] = b
-    out = {}
-    for c in clases:
-        ma, mb = A == c, B == c
-        u = (ma | mb).sum()
-        out[c] = float((ma & mb).sum() / u) if u else 0.0
-    return out
 
 
 def _parse_view(v):
@@ -2728,8 +2354,8 @@ def op_fit(args):
     refs = []
     for r in entrada:
         r = {'path': r} if isinstance(r, str) else dict(r)
-        mask = _subject_mask(_load_pixels(os.path.abspath(r['path']), 400), args.get('holes', 'fill'))
-        crop = _mask_crop(mask, H)
+        mask = mascaras.subject_mask(_load_pixels(os.path.abspath(r['path']), 400), args.get('holes', 'fill'))
+        crop = mascaras.crop(mask, H)
         if crop is None:
             raise ValueError('No se detectó la figura en la referencia %s' % r['path'])
         v = _parse_view(r.get('view'))
@@ -2747,8 +2373,8 @@ def op_fit(args):
             colores = False
         else:
             for ref in refs:
-                lab = _classify(ref['px'], ref['mask'], pal)
-                ref['lab'] = _crop_labels(lab, ref['mask'], H)
+                lab = mascaras.classify(ref['px'], ref['mask'], pal)
+                ref['lab'] = mascaras.crop_labels(lab, ref['mask'], H)
                 total = max(1, int(ref['mask'].sum()))
                 ref['clases'] = [c for c in range(len(pal)) if (lab == c).sum() / total >= 0.01]
                 ref['px'] = None
@@ -2804,12 +2430,12 @@ def op_fit(args):
             bpy.ops.render.render(write_still=True)
             px = _load_pixels(tmp)
             alfa = px[..., 3] > 0.5
-            m = _mask_crop(_holes(alfa, args.get('holes', 'fill')), H)
-            ref['iou'] = _iou_aligned(ref['c'], m) if m is not None else 0.0
+            m = mascaras.crop(mascaras.fill_holes(alfa, args.get('holes', 'fill')), H)
+            ref['iou'] = mascaras.iou_aligned(ref['c'], m) if m is not None else 0.0
             valor = ref['iou']
             if colores and m is not None and ref['clases']:
-                lab = _crop_labels(_classify(px, alfa, pal), alfa, H)
-                ref['clsIou'] = _iou_classes(ref['lab'], lab, ref['clases'])
+                lab = mascaras.crop_labels(mascaras.classify(px, alfa, pal), alfa, H)
+                ref['clsIou'] = mascaras.iou_classes(ref['lab'], lab, ref['clases'])
                 cw = float(args.get('colorWeight', 0.3))
                 valor = (1 - cw) * ref['iou'] + cw * sum(ref['clsIou'].values()) / len(ref['clsIou'])
             total += valor
@@ -3282,21 +2908,6 @@ def op_export(args):
 
 # ----------------------------------------------------------------------------------- despacho
 
-def _draw_polyline(img, pts, color, closed=True, width=1):
-    """Dibuja una polilínea (en píxeles, filas de arriba abajo) sobre img (h, w, 4)."""
-    import numpy as np
-    h, w = img.shape[:2]
-    q = np.vstack([pts, pts[:1]]) if closed else pts
-    for a, b in zip(q[:-1], q[1:]):
-        n = int(max(abs(b[0] - a[0]), abs(b[1] - a[1])) * 2) + 2
-        t = np.linspace(0, 1, n)[:, None]
-        p = a + (b - a) * t
-        for dx in range(-width + 1, width):
-            for dy in range(-width + 1, width):
-                xs = np.clip(np.round(p[:, 0]).astype(int) + dx, 0, w - 1)
-                ys = np.clip(np.round(p[:, 1]).astype(int) + dy, 0, h - 1)
-                img[ys, xs, :3] = color
-
 
 _COLORES_TRAZO = [(1, 0.85, 0), (1, 0.2, 0.75), (0.2, 0.9, 0.2), (1, 0.45, 0), (0.6, 0.4, 1), (1, 1, 1)]
 
@@ -3323,21 +2934,21 @@ def _contour_strokes(args):
         img[..., :3] = img[..., :3] * 0.55 + 0.4
         img[..., 3] = 1
         fr = info['_frame']
-        _draw_polyline(img, info['_body'], (0, 0.8, 1), True, 2)
+        mascaras.draw_polyline(img, info['_body'], (0, 0.8, 1), True, 2)
         for i, t in enumerate(trazos):
             p = np.array(t['points'])
             q = np.column_stack([p[:, 0] / fr['k'] + fr['x0'], fr['abajo'] - p[:, 1] / fr['k']])
             col = _COLORES_TRAZO[i % len(_COLORES_TRAZO)]
-            _draw_polyline(img, q, col, False, 2)
+            mascaras.draw_polyline(img, q, col, False, 2)
             tg = np.gradient(q, axis=0)
             tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
             nrm = np.column_stack([-tg[:, 1], tg[:, 0]]) * (np.array(t['radii']) / fr['k'])[:, None]
-            _draw_polyline(img, q + nrm, col, False)
-            _draw_polyline(img, q - nrm, col, False)
+            mascaras.draw_polyline(img, q + nrm, col, False)
+            mascaras.draw_polyline(img, q - nrm, col, False)
         for b in info.get('blobs', []):                    # las bolas, en blanco
             t = np.linspace(0, 2 * np.pi, 64)
             c = np.array([b['center'][0] / fr['k'] + fr['x0'], fr['abajo'] - b['center'][1] / fr['k']])
-            _draw_polyline(img, c + np.column_stack([np.cos(t), np.sin(t)]) * b['radius'] / fr['k'], (1, 1, 1), True, 2)
+            mascaras.draw_polyline(img, c + np.column_stack([np.cos(t), np.sin(t)]) * b['radius'] / fr['k'], (1, 1, 1), True, 2)
         out = os.path.abspath(args['preview'])
         os.makedirs(os.path.dirname(out), exist_ok=True)
         im = bpy.data.images.new('bs_contour', img.shape[1], img.shape[0], alpha=False)
@@ -3391,23 +3002,23 @@ def op_contour(args):
         if o['type'] == 'lathe':
             k, eje, y0 = fr['k'], fr['axis'], fr['y0']
             filas = -(y0 + perfil[:, 1] / k)
-            _draw_polyline(img, np.array([[eje, filas.min()], [eje, filas.max()]]), (1, 0.85, 0), False)
+            mascaras.draw_polyline(img, np.array([[eje, filas.min()], [eje, filas.max()]]), (1, 0.85, 0), False)
             for lado in (-1, 1):
-                _draw_polyline(img, np.column_stack([eje + lado * perfil[:, 0] / k, filas]), (0, 0.8, 1), False, 2)
+                mascaras.draw_polyline(img, np.column_stack([eje + lado * perfil[:, 0] / k, filas]), (0, 0.8, 1), False, 2)
             for b in info['bands'][1:]:                     # límites de las franjas de color, en verde
                 fila = -(y0 + b['from'] * info['height'] / k)
                 ancho = info['maxRadius'] / k * 1.15
-                _draw_polyline(img, np.array([[eje - ancho, fila], [eje + ancho, fila]]), (0.2, 0.9, 0.2), False)
+                mascaras.draw_polyline(img, np.array([[eje - ancho, fila], [eje + ancho, fila]]), (0.2, 0.9, 0.2), False)
         else:
             k, c = fr['k'], np.array(fr['center'])
             lazos = [l for r in regs for l in [r['outer']] + r['holes']]
             for lazo, l in zip(lazos, info['loops']):
                 pxs = (lazo / k + c) * [1, -1]
                 fourier = l['method'] == 'fourier'
-                _draw_polyline(img, pxs, (0, 0.8, 1) if fourier else (1, 0.2, 0.75), True, 2)
+                mascaras.draw_polyline(img, pxs, (0, 0.8, 1) if fourier else (1, 0.2, 0.75), True, 2)
                 if not fourier:
                     for v in pxs:
-                        _draw_polyline(img, np.array([v - 2, v + 2]), (1, 0.85, 0), False, 2)
+                        mascaras.draw_polyline(img, np.array([v - 2, v + 2]), (1, 0.85, 0), False, 2)
         out = os.path.abspath(args['preview'])
         os.makedirs(os.path.dirname(out), exist_ok=True)
         im = bpy.data.images.new('bs_contour', img.shape[1], img.shape[0], alpha=False)
