@@ -436,18 +436,50 @@ def _views(bm, o, name):
     _record(name, o, info, None, [('front', ruta_f), ('side', ruta_s), ('top', ruta_t)])
 
 
+def _profundidad(t, otros):
+    """La parte de la otra vista que ocupa las mismas alturas que el trazo t (casi el mismo tramo de z, y
+    que sube o baja sin volver): en cada punto de t su centro en la otra vista, y cuánto más fino o
+    grueso es ahí (la mediana de sus radios sobre la de t). None si ninguna calza."""
+    import numpy as np
+    z = np.array(t['points'])[:, 1]
+    mejor, solape_max = None, 0.6
+    for j, u in enumerate(otros):
+        q = np.array(u['points'])
+        zq = q[:, 1]
+        dz = np.diff(zq)
+        if len(dz) < 2 or max((dz > 0).mean(), (dz < 0).mean()) < 0.9:
+            continue                                        # vuelve sobre sí misma: no se lee por altura
+        solape = min(z.max(), zq.max()) - max(z.min(), zq.min())
+        solape /= max(z.max() - z.min(), zq.max() - zq.min(), 1e-9)
+        if solape > solape_max:
+            mejor, solape_max = j, solape
+    if mejor is None:
+        return None
+    u = otros[mejor]
+    q = np.array(u['points'])
+    orden = np.argsort(q[:, 1])
+    rq, rt = np.array(u['radii']), np.array(t['radii'])
+    dentro = (z >= q[:, 1].min()) & (z <= q[:, 1].max())
+    ratio = float(np.median(rq)) / max(float(np.median(rt[dentro] if dentro.any() else rt)), 1e-9)
+    return {'indice': mejor, 'ratio': ratio, 'centro': np.interp(z, q[orden, 1], q[orden, 0]).tolist()}
+
+
 def _stroke(bm, o, name):
     """Tubos desde las partes finas de una vista (asas, picos, alambres, antenas, ramas, patas): de la
     imagen (`image`, la vista donde el trazo se ve a lo largo; `view` front o side) se mide el eje de
     cada parte fina y su ancho en cada punto, y se hace un tubo que lo sigue y se mete en el cuerpo
     donde lo toca. Con la misma imagen, `height` y `location` que el `views` del cuerpo, encaja con él.
     `pick` [i, ...] elige trazos (del más largo al más corto; sin pick, todos); `color` toma solo los
-    de ese color; `flat` < 1 aplana la sección de canto (un asa de chapa: 0.4)."""
+    de ese color; `flat` < 1 aplana la sección de canto (un asa de chapa: 0.4). Con la otra vista
+    (`side` si view es front, `front` si es side) la profundidad sale de ella: cada trazo toma de la
+    parte que ocupa las mismas alturas en la otra vista su posición (una oreja que se inclina hacia
+    atrás, una pata que va hacia adelante) y su grosor (una oreja plana), en vez de quedar en el plano
+    de la vista y redondo."""
     from . import contours
     px, ruta = _image_px(o)
-    trazos, info = contours.strokes(px, height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)),
-                                    threshold=o.get('threshold'), color=o.get('color'),
-                                    color_tol=float(o.get('colorTolerance', 0.15)))
+    medir = dict(height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)), threshold=o.get('threshold'),
+                 color=o.get('color'), color_tol=float(o.get('colorTolerance', 0.15)))
+    trazos, info = contours.strokes(px, **medir)
     if not trazos:
         raise ValueError('stroke: no hay partes finas en la imagen (sube thin, ahora %s %% del alto, o revisa '
                          'color)' % o.get('thin', 10))
@@ -459,23 +491,34 @@ def _stroke(bm, o, name):
     if lado not in ('front', 'side'):
         raise ValueError('view debe ser front o side')
     flat = float(o.get('flat', 1.0))
+    otra = 'side' if lado == 'front' else 'front'
+    otros, ruta_otra = [], None
+    if o.get(otra):
+        px2, ruta_otra = _image_px(o, otra)
+        otros, _ = contours.strokes(px2, **medir)
+    seg = int(o.get('segments', 16))
+    resumen = [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i)
+               for i, t in enumerate(trazos)]
     for i in idx:
         t = trazos[i]
         pts = [(x, 0.0, z) if lado == 'front' else (0.0, x, z) for x, z in t['points']]
-        antes = set(bm.verts)
-        _tube(bm, {'points': pts, 'radii': t['radii'], 'segments': int(o.get('segments', 16))})
-        if flat != 1.0:
-            for v in bm.verts:
-                if v not in antes:
-                    if lado == 'front':
-                        v.co.y *= flat
-                    else:
-                        v.co.x *= flat
-    resumen = [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i)
-               for i, t in enumerate(trazos)]
+        hondo = _profundidad(t, otros)
+        n0 = len(bm.verts)
+        _tube(bm, {'points': pts, 'radii': t['radii'], 'segments': seg})
+        bm.verts.ensure_lookup_table()
+        nuevos = [bm.verts[k] for k in range(n0, len(bm.verts))]
+        eje = 1 if lado == 'front' else 0                   # la coordenada de profundidad: y de frente
+        for k, v in enumerate(nuevos):
+            anillo = min(k // seg, len(pts) - 1) if k < seg * len(pts) else (0 if k == seg * len(pts) else len(pts) - 1)
+            if hondo:
+                v.co[eje] = v.co[eje] * hondo['ratio'] + hondo['centro'][anillo]
+            elif flat != 1.0:
+                v.co[eje] *= flat
+        if hondo:
+            resumen[i]['depthFrom'] = hondo['indice']
     _record(name, o, {'strokes': resumen, 'picked': idx, 'thinPercent': info['thinPercent'],
                       'targetMet': all(trazos[i]['iou'] >= 0.85 for i in idx), 'tolerancePercent': None,
-                      'elapsedMs': info['elapsedMs']}, ruta)
+                      'elapsedMs': info['elapsedMs']}, ruta, [(otra, ruta_otra)])
     _BUILD['sources'][name]['result']['strokes'] = [dict(r, points=t['points'], radii=t['radii'])
                                                     for r, t in zip(resumen, trazos)]
 
@@ -619,7 +662,7 @@ def _record(name, o, info, ruta=None, otras=()):
                         for l, c in zip(pub['loops'], info['loops'])]
     fuente = {'generator': o.get('type'), 'version': VERSION,
               'params': {k: o[k] for k in GEOM_KEYS if k in o and k not in ('image', 'profile')
-                         and not (o.get('type') == 'views' and k in ('front', 'side', 'top'))},
+                         and not (o.get('type') in ('views', 'stroke') and k in ('front', 'side', 'top'))},
               'result': res}
     for clave, r in [('image', ruta)] + list(otras):
         if r:
@@ -1216,7 +1259,9 @@ def surface_hit(target, at, side='front'):
 def _attach(o, spec, warnings):
     """Coloca el objeto sobre la superficie de otro: ojos, botones, nubes, remaches, parches.
     `attach`: {to, side (front|back|left|right|top|bottom|[x,y,z]), at [x,y,z] (punto aproximado, por
-    defecto la location), offset (separación), align (por defecto sí: su eje Z sigue la normal), spin (°)}."""
+    defecto la location), offset (separación), align (por defecto sí: su eje Z sigue la normal), spin (°),
+    wrap (true: curvada sobre la superficie; "bake": curvada una vez, sin modificadores), project ("view":
+    como un calco a lo largo de side, para detalles pintados en una vista)}."""
     a = spec['attach']
     tgt = _obj(a['to'])
     side = a.get('side', 'front')
@@ -1234,6 +1279,12 @@ def _attach(o, spec, warnings):
     # location/rotation a mano aplicaba dos veces la transformación del padre
     bpy.context.view_layer.update()
     loc, rot, esc = o.matrix_world.decompose()
+    if a.get('project') == 'view':
+        # como un calco: proyectada a lo largo de la vista (side), no girada hacia la normal de su centro.
+        # Así los detalles pintados en una vista coinciden entre sí como en el dibujo (el brillo de un ojo
+        # en su hueco, aunque sean dos piezas con centros distintos). Para piezas chicas que miran a esa
+        # vista: una grande que da la vuelta al cuerpo (un ala) queda plana donde el rayo no lo toca.
+        n = Vector(SIDES[side] if isinstance(side, str) else vec3(side)).normalized()
     if a.get('align', True):
         o.rotation_mode = 'XYZ'
         rot = n.to_track_quat('Z', 'Y')
@@ -1250,19 +1301,47 @@ def _attach(o, spec, warnings):
         m.use_project_z = True
         m.use_negative_direction = m.use_positive_direction = True
         o.modifiers.move(o.modifiers.find('bs_wrap'), 0)
-        if o.type == 'MESH' and len(o.data.vertices) < 400:
-            # una pieza de pocos vértices (un outline de polígono: triángulos largos y planos) no tiene
-            # puntos que pegar a la curva y la superficie la atraviesa: se subdivide antes de envolverla
+        niveles = 0
+        if o.type == 'MESH' and o.data.edges:
+            # un triángulo largo y plano (un outline) no tiene puntos que pegar a la curva: queda como una
+            # cuerda por debajo de la superficie y la superficie lo atraviesa (un ojo con el cuerpo asomando
+            # por el medio). Se subdivide hasta que la flecha de su arista más larga sobre la curvatura del
+            # cuerpo (radio ~ su medida más chica / 2) quede bajo la separación.
+            larga = max((o.data.vertices[e.vertices[0]].co - o.data.vertices[e.vertices[1]].co).length
+                        for e in o.data.edges) * max(esc)
+            radio = max(min(tgt.dimensions) / 2, 1e-6)
+            cuerda = math.sqrt(4 * radio * max(off, 0.0005))     # flecha c²/8R = separación/2
+            # (+1: la curvatura local puede ser más cerrada que la media, y una pieza que se curva mucho,
+            # como un ala, necesita más puntos para seguirla)
+            niveles = max(0, min(4, 1 + math.ceil(math.log2(max(larga / cuerda, 1.0)))))
+        if niveles:
             sub = o.modifiers.get('bs_wrap_sub') or o.modifiers.new('bs_wrap_sub', 'SUBSURF')
-            sub.subdivision_type, sub.levels, sub.render_levels = 'SIMPLE', 4, 4
+            sub.subdivision_type, sub.levels, sub.render_levels = 'SIMPLE', niveles, niveles
             o.modifiers.move(o.modifiers.find('bs_wrap_sub'), 0)
+        elif o.modifiers.get('bs_wrap_sub'):
+            o.modifiers.remove(o.modifiers['bs_wrap_sub'])
+        if o.type == 'MESH':
+            # pegada a 1 mm la pieza copia las facetas del cuerpo, y su propio sombreado las marca como
+            # franjas: toma las normales del cuerpo, como si estuviera pintada sobre él
+            # (solo la cara de afuera: la de atrás mira al cuerpo, y con la normal de afuera Workbench la
+            # ve de espaldas y la oscurece)
+            zs = [v.co.z for v in o.data.vertices]
+            medio = (min(zs) + max(zs)) / 2 if zs else 0.0
+            vg = o.vertex_groups.get('bs_frente') or o.vertex_groups.new(name='bs_frente')
+            vg.remove([v.index for v in o.data.vertices])
+            vg.add([v.index for v in o.data.vertices if v.co.z >= medio], 1.0, 'REPLACE')
+            nm = o.modifiers.get('bs_wrap_normales') or o.modifiers.new('bs_wrap_normales', 'DATA_TRANSFER')
+            nm.object, nm.use_loop_data, nm.vertex_group = tgt, True, 'bs_frente'
+            nm.data_types_loops = {'CUSTOM_NORMAL'}
+            nm.loop_mapping = 'POLYINTERP_NEAREST'
+            o.modifiers.move(o.modifiers.find('bs_wrap_normales'), len(o.modifiers) - 1)
         if a.get('wrap') == 'bake' and o.type == 'MESH':
             # la forma curvada queda en la malla y se quitan los modificadores: así la pieza se puede
             # animar (un ala que aletea desde el hombro); con el modificador vivo se volvería a pegar al
             # cuerpo en cada cuadro. Toma la pose del cuadro actual.
             bpy.context.view_layer.update()
             me = bpy.data.meshes.new_from_object(o.evaluated_get(bpy.context.evaluated_depsgraph_get()))
-            for n in ('bs_wrap', 'bs_wrap_sub'):
+            for n in ('bs_wrap', 'bs_wrap_sub', 'bs_wrap_normales'):
                 if o.modifiers.get(n):
                     o.modifiers.remove(o.modifiers[n])
             viejo, o.data = o.data, me
@@ -1604,6 +1683,15 @@ def _apply_scene(cfg, warnings, base_dir=None):
 DEFAULT_OBJECTS = {'Cube': 'MESH', 'Light': 'LIGHT', 'Camera': 'CAMERA'}
 
 
+def _con_nombre(name, fn, *args):
+    """fn(*args); si falla, el error dice de qué objeto del spec es."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        e.args = ('«%s»: %s' % (name, e.args[0] if e.args else e),) + tuple(e.args[1:])
+        raise
+
+
 def op_build(spec):
     """Crea o actualiza (por nombre) materiales, colecciones, objetos, luces, cámaras y animación."""
     warnings, created, updated, removed, replaced = [], [], [], [], []
@@ -1659,7 +1747,7 @@ def op_build(spec):
             if t in PRIMITIVES and any(k in os_ for k in GEOM_KEYS if k != 'type') \
                     and o.get('bs_geom') != _geom_sig(os_):
                 old = o.data
-                o.data = _geom_data(os_, name)
+                o.data = _con_nombre(name, _geom_data, os_, name)
                 for m in old.materials:
                     o.data.materials.append(m)
                 if old.users == 0:
@@ -1669,7 +1757,7 @@ def op_build(spec):
         else:
             t = t or 'cube'
             os_ = dict(os_, type=t)
-            o, _ = _new_object(os_, name)
+            o, _ = _con_nombre(name, _new_object, os_, name)
             if t in PRIMITIVES:
                 o['bs_geom'] = _geom_sig(os_)
             created.append(name)
@@ -1684,8 +1772,11 @@ def op_build(spec):
                 o['bs_view_at'] = _BUILD['viewAt'][name]
             if o.get('bs_view_at'):
                 x, z = o['bs_view_at']
-                o.location = Vector(vec3(os_.get('location', (0, 0, 0)))) + Vector(
-                    (0, x, z) if str(os_.get('view', 'front')).lower() == 'side' else (x, 0, z))
+                de_lado = str(os_.get('view', 'front')).lower() == 'side'
+                o.location = Vector(vec3(os_.get('location', (0, 0, 0)))) + Vector((0, x, z) if de_lado else (x, 0, z))
+                if de_lado and o.type == 'MESH' and 'rotation' not in os_ and not os_.get('attach') \
+                        and str(os_.get('plane', 'XZ')).upper() == 'XZ':
+                    o.rotation_euler = (0, 0, math.pi / 2)  # de pie en el plano de esa vista (YZ, de frente a +X)
         if o.type == 'CURVE' and t == 'outline' and 'rotation' not in os_ \
                 and str(os_.get('plane', 'XZ')).upper() == 'XZ':
             o.rotation_euler = (math.pi / 2, 0, 0)          # la curva 2D vive en XY: de pie, de frente a -Y

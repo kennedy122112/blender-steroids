@@ -76,8 +76,16 @@ def coverage(rgba, threshold=None, color=None, color_tol=0.15):
     Con `color` ('#rrggbb') el sujeto es lo que tiene ese color (color_coverage)."""
     if color:
         # una parte de un color está dentro de la figura: el fondo nunca cuenta, aunque su color quede
-        # dentro de la tolerancia (una panza crema sobre un fondo gris claro)
-        return np.minimum(color_coverage(rgba, color, color_tol), coverage(rgba, threshold))
+        # dentro de la tolerancia (una panza crema sobre un fondo gris claro). Dentro = dentro del contorno
+        # de afuera: lo que la figura encierra cuenta aunque se parezca al fondo (el brillo de un ojo).
+        # (un hueco chico; uno grande, como el fondo entre unas patas y la rama, sigue siendo fondo)
+        dentro = coverage(rgba, threshold)
+        regs = regions(trace(dentro))
+        if not regs:
+            return np.zeros(dentro.shape)
+        filas = np.concatenate([r['outer'][:, 1] for r in regs])
+        lleno = _tapar(regs, dentro.shape, 0.002 * (filas.max() - filas.min()) ** 2)
+        return np.minimum(color_coverage(rgba, color, color_tol), np.maximum(dentro, lleno))
     rgba = np.asarray(rgba, np.float64)
     if rgba.shape[-1] == 4 and rgba[..., 3].min() < 0.5:
         return rgba[..., 3]
@@ -418,9 +426,11 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
     if isinstance(loops_or_image, np.ndarray):
         f = coverage(loops_or_image, threshold, color, color_tol)
         h, w = f.shape
-        regs = regions(trace(f), min_area=min_area_frac * h * w)
+        # por color se piden detalles a propósito (el brillo de un ojo, un botón): se aceptan más chicos
+        regs = regions(trace(f), min_area=min_area_frac * h * w * (0.2 if color else 1.0))
         if not regs:
-            raise ValueError('No se encontró ninguna figura en la imagen (prueba con threshold)')
+            raise ValueError('No se encontró ninguna figura en la imagen (%s)' % (
+                'revisa color y colorTolerance' if color else 'prueba con threshold'))
         regs = [{'outer': r['outer'] * [1, -1], 'holes': [hh * [1, -1] for hh in r['holes']]} for r in regs]
         regs.sort(key=lambda r: -abs(area(r['outer'])))
         if pick is not None:
@@ -770,6 +780,17 @@ def _rellenar(reg, shape):
     return rasterize([reg['outer'] * [1, -1]] + [hh * [1, -1] for hh in reg['holes']], shape, (0.0, 0.0), 1.0)
 
 
+def _tapar(regs, shape, area_max):
+    """Máscara de las regiones con sus huecos de menos de `area_max` px² rellenos: un brillo, un botón
+    claro. Cada figura se rellena por su contorno de afuera menos sus huecos grandes (el anillo de
+    antialias de un brillo se traza en pedazos sueltos: no se pueden rellenar los chicos uno por uno)."""
+    m = np.zeros(shape, bool)
+    for reg in regs:
+        grandes = [hh * [1, -1] for hh in reg['holes'] if abs(area(hh)) >= area_max]
+        m |= rasterize([reg['outer'] * [1, -1]] + grandes, shape, (0.0, 0.0), 1.0)
+    return m
+
+
 def split_thin(f, width):
     """Separa el cuerpo de las partes finas que le salen (asas, picos, alambres, patas finas): lo que
     queda al abrir la silueta con un disco de `width` px de diámetro es el cuerpo (su región más grande),
@@ -778,18 +799,24 @@ def split_thin(f, width):
     m = np.asarray(f) > 0.5
     h, w = m.shape
     r = max(1, int(round(width / 2)))
-    abierto = _crecer(_encoger(m, r), r) & m
+    # un hueco chico (el brillo de un ojo, un botón claro) es un detalle pintado: la apertura lo agrandaría
+    # y se comería el borde entre él y el contorno. Se rellena solo para separar las partes.
+    lleno = m | _tapar(regions(trace(m.astype(np.float64))), m.shape, r * r)
+    abierto = _crecer(_encoger(lleno, r), r) & lleno
     regs = regions(trace(abierto.astype(np.float64)))
     if not regs:
         return np.zeros_like(m), m
     mayor = max(regs, key=lambda g: abs(area(g['outer'])))
     base = _rellenar(mayor, m.shape) & abierto
     resto = m & ~base
-    # partes finas de verdad; las astillas que la apertura le quita a cada esquina vuelven al cuerpo
+    # partes finas de verdad; las astillas que la apertura le quita a cada esquina vuelven al cuerpo. Una
+    # astilla queda pegada al cuerpo; una parte fina, aunque sea chica (una oreja de canto), sobresale lejos
     finas = np.zeros_like(m)
+    cerca_base = _crecer(base, max(1, int(0.6 * r)))
     for reg in regions(trace(resto.astype(np.float64))):
-        if abs(area(reg['outer'])) >= 1.5 * r * r:
-            finas |= _rellenar(reg, m.shape) & resto
+        parte = _rellenar(reg, m.shape) & resto
+        if abs(area(reg['outer'])) >= 1.5 * r * r or (parte & ~cerca_base).sum() > r:
+            finas |= parte
     cuerpo = m & ~finas
     # en cada unión el borde de la apertura no sigue el del cuerpo: sigue los lados de la parte fina un
     # trecho y la cruza con un arco (un muñón). Se corta por la recta entre las dos esquinas entrantes
@@ -1075,6 +1102,16 @@ def _trazo(comp, g, cuerpo, grosor):
             break
         sk &= ~fin
     p = _camino_mas_largo(sk)
+    # una parte corta y gruesa (un brazo, una pata, una oreja de un personaje) casi no tiene esqueleto: sus
+    # ramitas a las esquinas lo doblan en V. Su eje es la dirección principal de sus píxeles.
+    ys_, xs_ = np.nonzero(comp)
+    if len(xs_) >= 3:
+        xy = np.column_stack([xs_, ys_]).astype(np.float64)
+        centro = xy.mean(0)
+        _, _, ejes = np.linalg.svd(xy - centro, full_matrices=False)
+        t_ = (xy - centro) @ ejes[0]
+        if t_.max() - t_.min() < 3.5 * grosor:
+            p = centro + np.outer(np.linspace(t_.min(), t_.max(), max(3, int(t_.max() - t_.min()))), ejes[0])
     if len(p) < 3:
         return None
     largo = np.linalg.norm(np.diff(p, axis=0), axis=1).sum()
@@ -1115,6 +1152,7 @@ def _trazo(comp, g, cuerpo, grosor):
         # se sigue la parte fina de a medio píxel, volviendo al medio de la sección en cada paso (así
         # sigue la curva de un asa); junto al cuerpo, donde el rincón la ensancha, sigue recto
         x, pasos, toca, hechos = q[-1].copy(), 0, False, [q[-1].copy()]
+        t0, giro_max = t.copy(), 0.5 / (0.5 * grosor)       # no dobla más cerrado que su ancho
         while pasos < 2 * (4 * poda + 2 * grosor):
             sig = x + 0.5 * t
             yi, xi = int(round(sig[1])), int(round(sig[0]))
@@ -1131,8 +1169,13 @@ def _trazo(comp, g, cuerpo, grosor):
                     hechos.append(sig)
                     t_ = sig - hechos[max(0, len(hechos) - 8)]
                     if np.linalg.norm(t_) > 1e-6:
-                        t = t_ / np.linalg.norm(t_)
+                        giro = np.arctan2(t[0] * t_[1] - t[1] * t_[0], t @ t_)
+                        giro = float(np.clip(giro, -giro_max, giro_max))
+                        t = np.array([t[0] * np.cos(giro) - t[1] * np.sin(giro),
+                                      t[0] * np.sin(giro) + t[1] * np.cos(giro)])
             x, pasos = sig, pasos + 1
+            if t @ t0 < 0.25:
+                break                                       # en un remate redondo (una mano) daría la vuelta
         if not toca:
             # se salió por un costado justo al llegar (un asa que se apoya en un hombro redondeado)
             ys_, xs_ = np.nonzero(cuerpo)
@@ -1235,8 +1278,13 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
                     pendientes.append((m_, yo, ancho))
             p = p + [x0, y0]
             pts = np.column_stack([(p[:, 0] - v['x0']) * k, (v['abajo'] - p[:, 1]) * k, anchos * k / 2])
-            n = int(np.clip(np.ceil(largo / max(2.0, 0.5 * ancho)), 6, 160))
-            sal = _por_arco(pts, n)
+            # más anillos donde el ancho cambia rápido: una punta redonda (una mano, un pie) con pocos
+            # anillos sale como un cono
+            u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+                                                + 3 * np.abs(np.diff(pts[:, 2])))])
+            n = int(np.clip(np.ceil(u[-1] / k / max(1.5, 0.2 * ancho)), 8, 200))
+            ui = np.linspace(0, u[-1], n)
+            sal = np.column_stack([np.interp(ui, u, pts[:, c]) for c in range(3)])
             salida.append({'points': [[round(float(a), 5), round(float(b), 5)] for a, b in sal[:, :2]],
                            'radii': [round(float(x), 5) for x in sal[:, 2]],
                            'length': round(largo * k, 4), 'attached': pegado, '_padre': padre,
@@ -1247,6 +1295,23 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
                            'startDirection': _direccion(sal[min(3, len(sal) - 1), :2], sal[0, :2]),
                            'endDirection': _direccion(sal[max(0, len(sal) - 4), :2], sal[-1, :2]),
                            'iou': round(iou, 3)})
+    # donde nace una rama, el ancho medido de la madre incluye el de la rama (un bulto en la rama del
+    # árbol bajo la pata): ahí la madre toma el radio de sus vecinos
+    for s in salida:
+        if s['_padre'] is None:
+            continue
+        madre = salida[s['_padre']]
+        mp, mr = np.array(madre['points']), np.array(madre['radii'])
+        cerca = np.zeros(len(mp), bool)
+        for lado, q in (('start', s['points'][0]), ('end', s['points'][-1])):
+            if lado in s['attached']:
+                d = 1.5 * (float(np.median(mr)) + float(np.median(s['radii'])))
+                cerca |= np.linalg.norm(mp - np.array(q), axis=1) < d
+        if cerca.any() and not cerca.all():
+            i_ = np.arange(len(mp))
+            mr[cerca] = np.interp(i_[cerca], i_[~cerca], mr[~cerca])
+            madre['radii'] = [round(float(x), 5) for x in mr]
+            madre['radius'] = [round(float(mr.min()), 4), round(float(mr.max()), 4)]
     orden = sorted(range(len(salida)), key=lambda i: -salida[i]['length'])
     nuevo = {viejo: i for i, viejo in enumerate(orden)}
     salida = [salida[i] for i in orden]

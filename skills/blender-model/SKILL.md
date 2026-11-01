@@ -118,7 +118,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
 | `views` | Cuerpo desde dos vistas: `front` (imagen de frente, X a la derecha) y `side` (vista derecha, Y a la derecha), `height` (alto de la silueta entera, en metros), `roundness` (2 = sección elíptica; más = más cuadrada) o `top` (imagen de la vista de arriba para la forma de la sección), `thin` (10), `segments`, `rings`. Regaderas, ratones, zapatos, autos de juguete, cuerpos de pájaro. Ver «Volumen desde dos vistas» |
-| `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, `flat` (aplana de canto), `segments`. Ver «Volumen desde dos vistas» |
+| `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas, brazos, orejas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, la otra vista (`side` si view es front, `front` si es side: de ahí salen su profundidad y su grosor de canto) o `flat` (aplana de canto), `segments`. Ver «Volumen desde dos vistas» |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
 | `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla; `color` toma una parte por su color, `pick` elige regiones, `inView` la deja en su lugar de la vista. Ver «Siluetas» |
@@ -186,7 +186,16 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
   `stroke`): la pieza sale a la escala de la vista y queda donde está en el dibujo (su centro, sumado a
   `location`; `view: "side"` si la imagen es la vista derecha). `outlines` trae ese centro en `at`. Con
   `attach` (y sin `at`) se pega en ese lugar del cuerpo: un ala desde el perfil con `side: "front"`, los
-  ojos o la panza desde la vista de frente con `side: "right"`.
+  ojos o la panza desde la vista de frente con `side: "right"`. Sin `attach` y con `view: "side"`, queda
+  de pie en el plano de esa vista (YZ): la hoja en la punta de una cola dibujada de perfil.
+- **Detalles pintados en una vista** (ojos con su brillo, mejillas, una boca): `attach` con
+  `project: "view"` los pega como un calco, a lo largo de la vista; así los de distintas piezas coinciden
+  como en el dibujo (el brillo cae en su hueco del ojo). Sin eso cada pieza se gira hacia la normal de
+  su centro, que es lo mejor para piezas grandes que dan la vuelta al cuerpo (un ala). Un brillo que se
+  parece al fondo cuenta igual si la figura lo encierra, y por color se aceptan detalles chicos.
+- **Pegadas con `wrap`** se subdividen solas lo necesario para seguir la curva sin que el cuerpo las
+  atraviese (según su arista más larga y el tamaño del cuerpo) y toman las normales del cuerpo: se ven
+  como pintadas sobre él, sin franjas.
 
 ### Torno desde una foto (`lathe` con `image`)
 Para objetos **de revolución** (jarrones, botellas, vasos, faroles, peones, columnas, lámparas): en vez
@@ -241,9 +250,13 @@ tubo se mete en él, sin huecos.
 - **Las imágenes**: una vista cada una, de frente y de costado exactos (sin perspectiva: un plano, un
   dibujo o una foto con zoom largo), con el objeto entero. Las dos deben mostrar el mismo alto total:
   si en una falta una parte de arriba (el asa), `viewsMismatchPercent` lo avisa.
-- **De canto**: un trazo es un tubo redondo. Si la otra vista lo muestra más angosto (un asa de chapa),
-  mide ese ancho con `contour -Strokes` en la otra imagen y usa `flat` = ancho de canto / ancho. Mídelo
-  siempre: en la regadera, aplanar el asa a ojo bajó el IoU de costado de 0.98 a 0.92.
+- **De canto y de costado: pásale la otra vista.** Un trazo medido en una vista queda en su plano y
+  redondo. Con la otra imagen (`"side": "lado.png"` en un trazo de frente, `"front"` en uno de costado)
+  cada trazo busca la parte que ocupa las mismas alturas en la otra vista y toma de ella su posición (una
+  oreja que se inclina hacia atrás, una pata que va hacia adelante) y su grosor (una oreja plana); el
+  resultado lo marca con `depthFrom`. Si no hay una (un brazo que de costado queda delante del cuerpo),
+  queda como estaba: ponlo en su lugar con `location`. Sin la otra imagen, `flat` = ancho de canto /
+  ancho, medido con `contour -Strokes` en la otra vista: aplanar a ojo un asa bajó el IoU de 0.98 a 0.92.
 - **Partes de otro color o que no son tubos** (la flor de una regadera, un tapón, una boquilla): toma
   solo el tubo con `color` y pon la pieza en la punta con `end`/`start` y su dirección
   (`endDirection`): un `lathe` o un cilindro girado para mirar en esa dirección.
@@ -253,16 +266,27 @@ tubo se mete en él, sin huecos.
 - **Partes que se ramifican** (patas sobre una rama, una rama con ramitas, una antena en Y): un trazo por
   rama. Primero el más largo; cada rama que sale de él trae `parent` (su índice) y se mete en su tubo.
   Las patas de frente, que se juntan sobre una rama vista de punta, se separan mejor por `color`.
+- **`pick` va por largo**: los índices son del más largo al más corto, así que si dos partes miden casi
+  lo mismo (un pico y una pata) o cambias la imagen, el orden puede cambiar. Revisa la lista de trazos en
+  `outlines` (o con `contour -Strokes`) después de construir, y prefiere `color` cuando la parte lo tenga.
+- **Brazos, patas y orejas cortos y gruesos** (un personaje): salen por su eje principal, con la punta
+  redonda (la mano, el pie) y sin dar la vuelta en ella. Que su ancho quede bajo `thin` (12-15 si son
+  gruesos). Una parte fina y chica (una oreja vista de canto) también se separa del cuerpo.
 - **Fondo con degradado y partes claras**: el fondo se mide por fila (un estudio, una ilustración), y una
   parte clara junto a una oscura (una panza crema) cuenta entera aunque se parezca al fondo.
 - **Una figura completa** (`examples/pajaro.json`, un pájaro sobre una rama): cuerpo y cabeza con `views`;
   rama, cola, pico y pata con `stroke` desde el perfil; las dos patas con `stroke` + `color` desde el
   frente; ala, panza y ojos con `outline` + `color` + `inView` + `attach`; alas con `wrap: "bake"` que
-  aletean desde un `empty` por hombro (`motion` oscillate) y cola desde otro en su raíz. Calza 0.983 de
-  perfil y 0.981 de frente. Si una vista muestra una pieza aparte pegada al borde (alas plegadas vistas
+  aletean desde un `empty` por hombro (`motion` oscillate) y cola desde otro en su raíz. Calza 0.988 de
+  perfil y 0.983 de frente. Si una vista muestra una pieza aparte pegada al borde (alas plegadas vistas
   de frente), el cuerpo la incluye y queda un poco más ancho a esa altura.
-- **No es para** formas con huecos que atraviesan el cuerpo de lado a lado, ni para lo que cambia de
-  sección de forma irregular (un personaje con brazos y piernas): ahí, primitivas.
+- **Un personaje** (`examples/lumo.json`, una criatura bípeda original): cabeza y torso con `views`;
+  orejas (por `color`), brazos y patas con `stroke` desde el frente y `side` para su profundidad; cola
+  con `stroke` desde el costado y su hoja con `outline` `inView` de costado; cara, brillos y mejillas por
+  color con `project: "view"`, y la panza. Los brazos saludan desde un `empty` por hombro y la cola se
+  mueve desde su raíz. Calza 0.97 de frente y 0.977 de costado.
+- **No es para** formas con huecos que atraviesan el cuerpo de lado a lado, ni para personajes con poses
+  que no se leen en dos vistas (brazos cruzados delante del cuerpo, piernas dobladas): ahí, primitivas.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no
