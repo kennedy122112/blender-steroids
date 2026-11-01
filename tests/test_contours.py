@@ -578,6 +578,50 @@ class Personaje(unittest.TestCase):
         self.assertLess(r.max(), 1.1 * np.median(r))
 
 
+def leer_png(ruta):
+    """RGBA 0..1 de un PNG de 8 bits RGB o RGBA sin entrelazar, solo con la biblioteca estándar (los tests
+    corren también con el Python de Blender, que no trae Pillow)."""
+    import struct
+    import zlib
+    datos = open(ruta, 'rb').read()
+    pos, idat, w = 8, b'', 0
+    while pos < len(datos):
+        n, tipo = struct.unpack('>I4s', datos[pos:pos + 8])
+        cuerpo = datos[pos + 8:pos + 8 + n]
+        if tipo == b'IHDR':
+            w, h, bits, color = struct.unpack('>IIBB', cuerpo[:10])
+            assert bits == 8 and color in (2, 6), (bits, color)
+            c = 3 if color == 2 else 4
+        elif tipo == b'IDAT':
+            idat += cuerpo
+        pos += 12 + n
+    crudo = np.frombuffer(zlib.decompress(idat), np.uint8).reshape(h, 1 + w * c)
+    img = np.zeros((h, w * c), np.int32)
+    for y in range(h):
+        f, fila = crudo[y, 0], crudo[y, 1:].astype(np.int32)
+        arriba = img[y - 1] if y else np.zeros(w * c, np.int32)
+        if f == 0:
+            img[y] = fila
+        elif f == 2:
+            img[y] = (fila + arriba) % 256
+        else:
+            r = np.zeros(w * c, np.int32)
+            for x in range(w * c):
+                izq = r[x - c] if x >= c else 0
+                diag = arriba[x - c] if x >= c else 0
+                if f == 1:
+                    pred = izq
+                elif f == 3:
+                    pred = (izq + arriba[x]) // 2
+                else:
+                    pa, pb, pc = abs(arriba[x] - diag), abs(izq - diag), abs(izq + arriba[x] - 2 * diag)
+                    pred = izq if pa <= pb and pa <= pc else (arriba[x] if pb <= pc else diag)
+                r[x] = (fila[x] + pred) % 256
+            img[y] = r
+    img = img.reshape(h, w, c) / 255.0
+    return img if c == 4 else np.dstack([img, np.ones((h, w))])
+
+
 def elipse(a, c, cx=0.0, cy=0.0, n=400):
     t = np.linspace(0, 2 * np.pi, n, endpoint=False)
     return np.column_stack([cx + a * np.cos(t), cy + c * np.sin(t)])
@@ -605,9 +649,7 @@ class Vinilo(unittest.TestCase):
     def test_pompon(self):
         # una parte redonda pegada al cuerpo no es un trazo: se informa como bola (centro y radio). La vista
         # de costado de examples/menta: pompón de radio 0.075 en (0.18, 0.275) sobre una silueta de 1.12
-        from PIL import Image
-        ruta = os.path.join(os.path.dirname(__file__), '..', 'examples', 'menta', 'lado.png')
-        img = np.asarray(Image.open(ruta).convert('RGBA'), np.float64) / 255
+        img = leer_png(os.path.join(os.path.dirname(__file__), '..', 'examples', 'menta', 'lado.png'))
         trazos, info = C.strokes(img, height=1.12, thin=12)
         self.assertEqual(len(info['blobs']), 1, info['blobs'])
         b = info['blobs'][0]
