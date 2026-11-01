@@ -75,14 +75,29 @@ def coverage(rgba, threshold=None, color=None, color_tol=0.15):
     el borde claro. `threshold` (0..1) fija a mano la distancia de color que separa sujeto y fondo.
     Con `color` ('#rrggbb') el sujeto es lo que tiene ese color (color_coverage)."""
     if color:
-        return color_coverage(rgba, color, color_tol)
+        # una parte de un color está dentro de la figura: el fondo nunca cuenta, aunque su color quede
+        # dentro de la tolerancia (una panza crema sobre un fondo gris claro)
+        return np.minimum(color_coverage(rgba, color, color_tol), coverage(rgba, threshold))
     rgba = np.asarray(rgba, np.float64)
     if rgba.shape[-1] == 4 and rgba[..., 3].min() < 0.5:
         return rgba[..., 3]
     rgb = rgba[..., :3]
     borde = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]])
     fondo = np.median(borde, axis=0)
-    d = np.abs(rgb - fondo).max(axis=-1)
+    # fondo con degradado vertical (un estudio, una ilustración): el color del fondo de cada fila, de los
+    # costados (mediana móvil de 31 filas, por si el sujeto toca un costado en algunas). Con uno solo,
+    # una parte clara (una panza crema) se confunde con el fondo de arriba o de abajo.
+    b = max(2, rgb.shape[1] // 60)
+    filas = np.median(np.concatenate([rgb[:, :b], rgb[:, -b:]], axis=1), axis=1)            # (h, 3)
+    filas = np.median(np.lib.stride_tricks.sliding_window_view(
+        np.pad(filas, ((15, 15), (0, 0)), mode='edge'), 31, axis=0), axis=-1)
+    if np.abs(filas - fondo).max() > 0.03:
+        d = np.abs(rgb - filas[:, None, :]).max(axis=-1)
+        fondo = np.median(filas, axis=0)
+        borde = np.concatenate([rgb[0] - filas[0], rgb[-1] - filas[-1], rgb[:, 0] - filas,
+                                rgb[:, -1] - filas]) + fondo                       # lo que se aparta de su fila
+    else:
+        d = np.abs(rgb - fondo).max(axis=-1)
     if threshold:
         return np.clip(d / (2 * float(threshold)), 0, 1)
     tinta = d[d > 0.25 * d.max()]
@@ -92,7 +107,12 @@ def coverage(rgba, threshold=None, color=None, color_tol=0.15):
     minimo = max(0.04, 3 * ruido)                    # contraste mínimo para contar como sujeto
     local = _max_local(d)
     relativo = np.where(local > 2 * minimo, d / np.maximum(local, 1e-6), 0.0)
-    return np.maximum(global_, relativo)
+    cob = np.maximum(global_, relativo)
+    # dentro de la figura, una parte clara junto a una oscura (una panza crema junto al plumaje) no es
+    # borde: su contraste relativo sale bajo y abriría una ranura. Lo que se aparta del fondo y no tiene
+    # fondo a 2 px cuenta entero; los bordes contra el fondo quedan con su valor subpíxel.
+    cerca_fondo = _max_local((d < minimo).astype(np.float64), 2) > 0
+    return np.where((d > 2 * minimo) & ~cerca_fondo, 1.0, cob)
 
 
 _TABLA = {1: [(3, 2)], 2: [(2, 1)], 3: [(3, 1)], 4: [(0, 1)], 5: [(3, 0), (2, 1)], 6: [(0, 2)],
@@ -380,13 +400,16 @@ def simplify(p, tol, method='auto', samples=1024, max_order=200):
 # ----------------------------------------------------------------------------------- todo junto
 
 def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='auto', threshold=None,
-            min_area_frac=0.0005, samples=1024, max_order=200, color=None, color_tol=0.15):
+            min_area_frac=0.0005, samples=1024, max_order=200, color=None, color_tol=0.15, pick=None,
+            scale=None):
     """Contornos simplificados listos para construir.
 
     loops_or_image: imagen RGBA (h, w, 4) con filas de arriba abajo, o una lista de regiones
     {'outer': [[x, y], ...], 'holes': [[[x, y], ...], ...]} en metros con y hacia arriba.
     size: medida en metros de la caja del conjunto en `axis` ('width' o 'height'); para imágenes, si
-    falta, 1 m de ancho. tolerance: % de la diagonal de la caja.
+    falta, 1 m de ancho. tolerance: % de la diagonal de la caja. pick: qué regiones (índices, de la de
+    más área a la de menos; una parte del mismo color que otra). scale: metros por píxel fijos (el marco
+    de una vista, ver ops), en vez de `size`.
 
     Devuelve (regiones, info): regiones con lazos en metros (y hacia arriba, centrados en el origen;
     exterior antihorario, huecos horario) e info con las medidas por lazo."""
@@ -399,6 +422,13 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
         if not regs:
             raise ValueError('No se encontró ninguna figura en la imagen (prueba con threshold)')
         regs = [{'outer': r['outer'] * [1, -1], 'holes': [hh * [1, -1] for hh in r['holes']]} for r in regs]
+        regs.sort(key=lambda r: -abs(area(r['outer'])))
+        if pick is not None:
+            idx = [int(i) for i in (pick if isinstance(pick, (list, tuple)) else [pick])]
+            if any(not 0 <= i < len(regs) for i in idx):
+                raise ValueError('pick fuera de rango: hay %d regiones (0..%d, de la más grande a la más chica)'
+                                 % (len(regs), len(regs) - 1))
+            regs = [regs[i] for i in idx]
     else:
         regs = [{'outer': dedupe(r['outer']), 'holes': [dedupe(hh) for hh in r.get('holes', [])]}
                 for r in loops_or_image]
@@ -414,7 +444,9 @@ def outline(loops_or_image, size=None, axis='width', tolerance=0.25, method='aut
     lo, hi = todos.min(0), todos.max(0)
     centro = (lo + hi) / 2
     caja = hi - lo
-    if size:
+    if scale:
+        k = float(scale)
+    elif size:
         k = float(size) / float(caja[0] if axis == 'width' else caja[1])
     elif isinstance(loops_or_image, np.ndarray):
         k = 1.0 / float(caja[0])
@@ -765,13 +797,14 @@ def split_thin(f, width):
     lazo = mayor['outer']
     n = len(lazo)
     cerca = _crecer(finas, 2)
+    cerca_fina = _crecer(finas, r + 2)
     junto = cerca[np.clip(np.round(lazo[:, 1]).astype(int), 0, h - 1),
                   np.clip(np.round(lazo[:, 0]).astype(int), 0, w - 1)]
 
     def esquina(i, paso):
         """Desde el extremo i del arco, por el borde hacia afuera: la primera esquina marcada (la unión)."""
         mejor, giro_max, d_mejor = i, 35.0, None
-        for d in range(6, int(3 * r) + 6):
+        for d in range(6, int(1.5 * r) + 6):
             k = (i + paso * d) % n
             u, v = lazo[k] - lazo[(k - 4) % n], lazo[(k + 4) % n] - lazo[k]
             giro = abs(np.degrees(np.arctan2(u[0] * v[1] - u[1] * v[0], u @ v)))
@@ -794,7 +827,8 @@ def split_thin(f, width):
             if j - i >= 2:
                 a_, b_ = esquina(i, -1), esquina(j, 1)
                 idx = np.arange(a_, a_ + ((b_ - a_) % n) + 1) % n
-                munon = rasterize([lazo[idx] * [1, -1]], m.shape, (0.0, 0.0), 1.0) & cuerpo
+                # solo cerca de la parte fina: si una esquina se buscó lejos, no se lleva un trozo del cuerpo
+                munon = rasterize([lazo[idx] * [1, -1]], m.shape, (0.0, 0.0), 1.0) & cuerpo & cerca_fina
                 cuerpo &= ~munon
                 finas |= munon
             i = j + 1
@@ -1003,7 +1037,7 @@ def _secciones(g, p, cuerpo, grosor, junto=None):
     k0 = len(ts) // 2
     anchos, desvio = np.full(len(p), np.nan), np.full(len(p), np.nan)
     if junto is None:
-        junto = _crecer(cuerpo, max(1, int(0.75 * grosor)))
+        junto = _crecer(cuerpo, max(1, int(0.4 * grosor)))
     h, w = cuerpo.shape
 
     def en(m, c):
@@ -1054,12 +1088,19 @@ def _trazo(comp, g, cuerpo, grosor):
     # punto se lleva al medio de su sección, medido en la imagen
     for _ in range(2):
         _, desvio = _secciones(g, p, cuerpo, grosor)
+        desvio = np.nan_to_num(desvio)
+        # mediana móvil de un ancho: donde sale otra rama el medio de la sección se corre de golpe hacia
+        # ella; eso no es el eje y se ignora
+        v_ = max(3, int(grosor / 1.5) | 1)
+        if len(desvio) > v_:
+            m_ = v_ // 2
+            desvio[m_:-m_] = np.median(np.lib.stride_tricks.sliding_window_view(desvio, v_), axis=1)
         tg = np.gradient(p, axis=0)
         tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
-        p = p + np.column_stack([-tg[:, 1], tg[:, 0]]) * np.nan_to_num(desvio)[:, None]
+        p = p + np.column_stack([-tg[:, 1], tg[:, 0]]) * desvio[:, None]
         p = _media_movil(p, 7)
     pegado = []
-    junto = _crecer(cuerpo, max(1, int(0.75 * grosor)))
+    junto = _crecer(cuerpo, max(1, int(0.4 * grosor)))
     # los puntos junto al cuerpo no se pudieron centrar: se quitan y se llega al cuerpo siguiendo la parte
     afuera = np.array([not (0 <= int(round(c[1])) < junto.shape[0] and 0 <= int(round(c[0])) < junto.shape[1]
                             and junto[int(round(c[1])), int(round(c[0]))]) for c in p])
@@ -1124,67 +1165,95 @@ def _direccion(a, b):
     return [round(float(x), 4) for x in d / max(float(np.linalg.norm(d)), 1e-12)]
 
 
-def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.15, min_length=3.0):
+def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.15, min_length=2.0):
     """Partes finas de una vista (asas, picos, alambres, antenas, patas, ramas) como trazos: su eje y su
     ancho en cada punto, en el marco de la vista (x desde el centro del cuerpo, z desde abajo de la
     silueta; en metros si hay `height`, el alto de la silueta entera). Con `color`, solo las partes de
-    ese color. Devuelve (trazos, info), del más largo al más corto, cada uno con `points` [[x, z], ...],
-    `radii`, en qué extremo toca el cuerpo (`attached`: start/end) y el IoU de su silueta reconstruida
-    contra la de la imagen."""
+    ese color. Una parte que se ramifica (unas patas sobre una rama, una rama con ramitas) da un trazo
+    por rama: primero el más largo y después las ramas que salen de él (`parent`), que se meten en su
+    tubo. Devuelve (trazos, info), del más largo al más corto, cada uno con `points` [[x, z], ...],
+    `radii`, en qué extremo toca el cuerpo u otro trazo (`attached`: start/end) y el IoU de su silueta
+    reconstruida contra la de la imagen."""
     import time
     inicio = time.perf_counter()
     v = _vista(rgba, thin, threshold)
     k = float(height) / v['alto'] if height else 1.0 / v['alto']
     grosor_max = float(thin) / 100 * v['alto']
-    fuente = color_coverage(rgba, color, color_tol) if color else v['f']
+    fuente = np.minimum(color_coverage(rgba, color, color_tol), v['f']) if color else v['f']
     finos = v['finos'] & (fuente > 0.5)
     g = fuente * ~v['cuerpo']
     salida = []
     h, w = finos.shape
-    for reg in regions(trace(finos.astype(np.float64)), min_area=(0.008 * v['alto']) ** 2):
+    area_min = (0.008 * v['alto']) ** 2
+    pad = int(grosor_max) + 4
+    for reg in regions(trace(finos.astype(np.float64)), min_area=area_min):
         comp = _rellenar(reg, finos.shape) & finos
-        if not comp.any():
-            continue
-        ys, xs = np.nonzero(comp)
-        pad = int(grosor_max) + 4
-        y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
-        x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
-        rec_ = (slice(y0, y1), slice(x0, x1))
-        c_ = comp[rec_]
-        grosor, e = 0, c_
-        while e.any() and grosor < 4 * grosor_max:
-            e = _encoger(e, 1)
-            grosor += 2
-        r = _trazo(c_, g[rec_] * _crecer(c_, 2), v['cuerpo'][rec_], max(grosor, 2))
-        if r is None:
-            continue
-        p, anchos, pegado = r
-        largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
-        if largo < min_length * float(np.median(anchos)):
-            continue                                        # una mancha, no un trazo
-        # IoU de la silueta reconstruida (fuera del cuerpo) contra la parte medida
-        tg = np.gradient(p, axis=0)
-        tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
-        nrm = np.column_stack([-tg[:, 1], tg[:, 0]])
-        borde = np.vstack([p + nrm * anchos[:, None] / 2, (p - nrm * anchos[:, None] / 2)[::-1]])
-        hecho = rasterize([borde * [1, -1]], c_.shape, (0.0, 0.0), 1.0)
-        afuera = ~v['cuerpo'][rec_]
-        iou = float((hecho & c_ & afuera).sum() / max(((hecho | c_) & afuera).sum(), 1))
-        p = p + [x0, y0]
-        pts = np.column_stack([(p[:, 0] - v['x0']) * k, (v['abajo'] - p[:, 1]) * k, anchos * k / 2])
-        n = int(np.clip(np.ceil(largo / max(2.0, 0.5 * float(np.median(anchos)))), 6, 160))
-        sal = _por_arco(pts, n)
-        salida.append({'points': [[round(float(a), 5), round(float(b), 5)] for a, b in sal[:, :2]],
-                       'radii': [round(float(x), 5) for x in sal[:, 2]],
-                       'length': round(largo * k, 4), 'attached': pegado,
-                       'radius': [round(float(sal[:, 2].min()), 4), round(float(sal[:, 2].max()), 4)],
-                       'start': [round(float(x), 4) for x in sal[0, :2]],
-                       'end': [round(float(x), 4) for x in sal[-1, :2]],
-                       # hacia afuera en cada punta: para poner ahí un remate (una flor de regadera, un tapón)
-                       'startDirection': _direccion(sal[min(3, len(sal) - 1), :2], sal[0, :2]),
-                       'endDirection': _direccion(sal[max(0, len(sal) - 4), :2], sal[-1, :2]),
-                       'iou': round(iou, 3)})
-    salida.sort(key=lambda s: -s['length'])
+        # cada rama se apoya en lo ya hecho (el cuerpo y los trazos anteriores de esta parte)
+        apoyo = v['cuerpo'].copy()
+        pendientes = [(comp, None, None)] if comp.any() else []
+        vueltas = 0
+        while pendientes and vueltas < 8:
+            c, padre, ancho_padre = pendientes.pop(0)
+            vueltas += 1
+            ys, xs = np.nonzero(c)
+            y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
+            x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+            rec_ = (slice(y0, y1), slice(x0, x1))
+            c_ = c[rec_]
+            grosor, e = 0, c_
+            while e.any() and grosor < 4 * grosor_max:
+                e = _encoger(e, 1)
+                grosor += 2
+            r = _trazo(c_, g[rec_] * ~apoyo[rec_] * _crecer(c_, 2), apoyo[rec_], max(grosor, 2))
+            if r is None:
+                continue
+            p, anchos, pegado = r
+            largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
+            ancho = float(np.median(anchos))
+            if largo < min_length * ancho or ancho < 2.5:
+                continue                                    # una mancha o una astilla, no un trazo
+            # IoU de la silueta reconstruida (fuera de lo ya hecho) contra la parte medida
+            tg = np.gradient(p, axis=0)
+            tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
+            nrm = np.column_stack([-tg[:, 1], tg[:, 0]])
+            borde = np.vstack([p + nrm * anchos[:, None] / 2, (p - nrm * anchos[:, None] / 2)[::-1]])
+            hecho = rasterize([borde * [1, -1]], c_.shape, (0.0, 0.0), 1.0)
+            # (solo cerca del tubo: las ramas que salen de él se miden aparte)
+            afuera = ~apoyo[rec_] & _crecer(hecho, max(2, int(0.5 * ancho)))
+            iou = float((hecho & c_ & afuera).sum() / max(((hecho | c_) & afuera).sum(), 1))
+            if padre is not None and (iou < 0.6 or ancho < 0.2 * ancho_padre or largo < 0.8 * ancho_padre):
+                continue                                    # lo que sobra junto al tubo de la rama madre
+            # lo que la rama no cubre (otras ramas que salen de ella) sigue en la cola
+            hecho_todo = np.zeros_like(finos)
+            hecho_todo[rec_] = hecho
+            apoyo |= hecho_todo
+            resto = c & ~_crecer(hecho_todo, 2)
+            yo = len(salida)
+            for sub in regions(trace(resto.astype(np.float64)), min_area=area_min):
+                m_ = _rellenar(sub, finos.shape) & resto
+                if m_.any():
+                    pendientes.append((m_, yo, ancho))
+            p = p + [x0, y0]
+            pts = np.column_stack([(p[:, 0] - v['x0']) * k, (v['abajo'] - p[:, 1]) * k, anchos * k / 2])
+            n = int(np.clip(np.ceil(largo / max(2.0, 0.5 * ancho)), 6, 160))
+            sal = _por_arco(pts, n)
+            salida.append({'points': [[round(float(a), 5), round(float(b), 5)] for a, b in sal[:, :2]],
+                           'radii': [round(float(x), 5) for x in sal[:, 2]],
+                           'length': round(largo * k, 4), 'attached': pegado, '_padre': padre,
+                           'radius': [round(float(sal[:, 2].min()), 4), round(float(sal[:, 2].max()), 4)],
+                           'start': [round(float(x), 4) for x in sal[0, :2]],
+                           'end': [round(float(x), 4) for x in sal[-1, :2]],
+                           # hacia afuera en cada punta: para poner ahí un remate (una flor de regadera, un tapón)
+                           'startDirection': _direccion(sal[min(3, len(sal) - 1), :2], sal[0, :2]),
+                           'endDirection': _direccion(sal[max(0, len(sal) - 4), :2], sal[-1, :2]),
+                           'iou': round(iou, 3)})
+    orden = sorted(range(len(salida)), key=lambda i: -salida[i]['length'])
+    nuevo = {viejo: i for i, viejo in enumerate(orden)}
+    salida = [salida[i] for i in orden]
+    for s in salida:
+        padre = s.pop('_padre')
+        if padre is not None:
+            s['parent'] = nuevo[padre]
     info = {'strokes': len(salida), 'thinPercent': float(thin),
             'elapsedMs': round(1000 * (time.perf_counter() - inicio), 1),
             '_frame': {'k': k, 'x0': v['x0'], 'abajo': v['abajo']}, '_body': v['pol']}

@@ -1,0 +1,312 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   1200,
+   900
+  ],
+  "fps": 24,
+  "frames": [
+   1,
+   96
+  ],
+  "world": {
+   "color": "#cfd6da",
+   "strength": 0.9
+  }
+ },
+ "materials": [
+  {
+   "name": "Pluma",
+   "color": "#34a0aa",
+   "roughness": 0.6
+  },
+  {
+   "name": "PlumaOscura",
+   "color": "#1e6e7a",
+   "roughness": 0.6
+  },
+  {
+   "name": "Crema",
+   "color": "#eee2c4",
+   "roughness": 0.7
+  },
+  {
+   "name": "Naranja",
+   "color": "#ee8c28",
+   "roughness": 0.45
+  },
+  {
+   "name": "Ojo",
+   "color": "#19191e",
+   "roughness": 0.15
+  },
+  {
+   "name": "Madera",
+   "color": "#785232",
+   "roughness": 0.8
+  }
+ ],
+ "objects": [
+  {
+   "name": "Cuerpo",
+   "type": "views",
+   "front": "pajaro/perfil.png",
+   "side": "pajaro/frente.png",
+   "height": 0.12,
+   "segments": 64,
+   "material": "Pluma",
+   "smooth": true
+  },
+  {
+   "name": "HombroI",
+   "type": "empty",
+   "location": [
+    0.012,
+    -0.03,
+    0.074
+   ],
+   "size": 0.01
+  },
+  {
+   "name": "HombroD",
+   "type": "empty",
+   "location": [
+    0.012,
+    0.03,
+    0.074
+   ],
+   "size": 0.01
+  },
+  {
+   "name": "BaseCola",
+   "type": "empty",
+   "location": [
+    -0.032,
+    0,
+    0.066
+   ],
+   "size": 0.01
+  },
+  {
+   "name": "Rama",
+   "type": "stroke",
+   "image": "pajaro/perfil.png",
+   "height": 0.12,
+   "pick": [
+    0
+   ],
+   "material": "Madera",
+   "smooth": true
+  },
+  {
+   "name": "Cola",
+   "type": "stroke",
+   "image": "pajaro/perfil.png",
+   "height": 0.12,
+   "pick": [
+    1
+   ],
+   "flat": 0.4,
+   "material": "PlumaOscura",
+   "smooth": true,
+   "parent": "BaseCola"
+  },
+  {
+   "name": "Pico",
+   "type": "stroke",
+   "image": "pajaro/perfil.png",
+   "height": 0.12,
+   "pick": [
+    3
+   ],
+   "material": "Naranja",
+   "smooth": true
+  },
+  {
+   "name": "Patas",
+   "type": "stroke",
+   "image": "pajaro/frente.png",
+   "view": "side",
+   "height": 0.12,
+   "color": "#ee8c28",
+   "location": [
+    0.0052,
+    0,
+    0
+   ],
+   "material": "Naranja",
+   "smooth": true
+  },
+  {
+   "name": "AlaI",
+   "type": "outline",
+   "image": "pajaro/perfil.png",
+   "inView": true,
+   "height": 0.12,
+   "color": "#1e6e7a",
+   "pick": [
+    0
+   ],
+   "plane": "XY",
+   "thickness": 0.0015,
+   "material": "PlumaOscura",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "offset": 0.0012,
+    "wrap": "bake"
+   },
+   "parent": "HombroI"
+  },
+  {
+   "name": "AlaD",
+   "type": "outline",
+   "image": "pajaro/perfil.png",
+   "inView": true,
+   "height": 0.12,
+   "color": "#1e6e7a",
+   "pick": [
+    0
+   ],
+   "plane": "XY",
+   "thickness": 0.0015,
+   "material": "PlumaOscura",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "back",
+    "offset": 0.0012,
+    "wrap": "bake"
+   },
+   "parent": "HombroD",
+   "scale": [
+    -1,
+    1,
+    1
+   ]
+  },
+  {
+   "name": "Panza",
+   "type": "outline",
+   "image": "pajaro/frente.png",
+   "inView": true,
+   "view": "side",
+   "height": 0.12,
+   "color": "#eee2c4",
+   "plane": "XY",
+   "thickness": 0.001,
+   "material": "Crema",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "right",
+    "offset": 0.0006,
+    "wrap": true
+   }
+  },
+  {
+   "name": "Ojos",
+   "type": "outline",
+   "image": "pajaro/frente.png",
+   "inView": true,
+   "view": "side",
+   "height": 0.12,
+   "color": "#19191e",
+   "plane": "XY",
+   "thickness": 0.001,
+   "material": "Ojo",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "right",
+    "offset": 0.0008,
+    "wrap": true
+   }
+  },
+  {
+   "name": "Sol",
+   "type": "light",
+   "light": "area",
+   "energy": 12,
+   "size": 0.6,
+   "location": [
+    0.35,
+    -0.4,
+    0.4
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.06
+   ]
+  },
+  {
+   "name": "Relleno",
+   "type": "light",
+   "light": "area",
+   "energy": 5,
+   "size": 0.8,
+   "location": [
+    -0.4,
+    0.3,
+    0.3
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.06
+   ]
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "frame": [
+    "Cuerpo",
+    "Cola",
+    "Pico",
+    "Patas"
+   ],
+   "view": [
+    0.7,
+    -1,
+    0.3
+   ],
+   "margin": 1.3
+  }
+ ],
+ "animation": [
+  {
+   "object": "HombroI",
+   "property": "rotation",
+   "axis": "x",
+   "motion": {
+    "kind": "oscillate",
+    "frequency": 3,
+    "amplitude": 30,
+    "offset": -30,
+    "phase": 90
+   }
+  },
+  {
+   "object": "HombroD",
+   "property": "rotation",
+   "axis": "x",
+   "motion": {
+    "kind": "oscillate",
+    "frequency": 3,
+    "amplitude": 30,
+    "offset": 30,
+    "phase": -90
+   }
+  },
+  {
+   "object": "BaseCola",
+   "property": "rotation",
+   "axis": "y",
+   "motion": {
+    "kind": "oscillate",
+    "frequency": 1.5,
+    "amplitude": 10
+   }
+  }
+ ]
+}
