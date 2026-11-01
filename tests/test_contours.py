@@ -583,7 +583,8 @@ def leer_png(ruta):
     corren también con el Python de Blender, que no trae Pillow)."""
     import struct
     import zlib
-    datos = open(ruta, 'rb').read()
+    with open(ruta, 'rb') as f_:
+        datos = f_.read()
     pos, idat, w = 8, b'', 0
     while pos < len(datos):
         n, tipo = struct.unpack('>I4s', datos[pos:pos + 8])
@@ -657,6 +658,43 @@ class Vinilo(unittest.TestCase):
         self.assertAlmostEqual(b['center'][1], 0.275, delta=0.006)
         self.assertGreater(b['iou'], 0.85)
         self.assertFalse(any(abs(t['start'][0] - 0.19) < 0.05 and abs(t['start'][1] - 0.27) < 0.05 for t in trazos))
+
+class Figura(unittest.TestCase):
+    """Prueba de la figura de vinilo sobre su base (examples/nico): la base de otro color no es parte de la
+    figura, las piernas juntas se separan, una pierna corta va derecha y las botas salen por su color."""
+
+    def setUp(self):
+        self.img = leer_png(os.path.join(os.path.dirname(__file__), '..', 'examples', 'nico', 'frente.png'))
+
+    def test_sin_la_base(self):
+        v_con = C._vista(self.img, 10)
+        v_sin = C._vista(self.img, 10, exclude=['#3a3f4a'], exclude_tol=0.05)
+        self.assertAlmostEqual(v_con['alto'], v_sin['alto'])        # el marco es el de la silueta entera
+        fila = int(v_sin['abajo'] - 0.03 * v_sin['alto'])           # la base: ni cuerpo ni parte fina
+        self.assertFalse((v_sin['cuerpo'][fila] | v_sin['finos'][fila]).any())
+        self.assertTrue(v_con['finos'][fila].any())
+
+    def test_piernas_juntas_y_derechas(self):
+        # las dos piernas, a 0.06 una de otra bajo el impermeable: cada unión se corta sola (antes la
+        # esquina de una se buscaba hasta la otra y se llevaba el impermeable entre las dos), y una pierna
+        # tan ancha como larga va de donde se pega hacia abajo, no en diagonal
+        trazos, _ = C.strokes(self.img, height=1.0, thin=10, color='#3c5aa0', exclude=['#3a3f4a'], exclude_tol=0.05)
+        self.assertEqual(len(trazos), 2, [(t['start'], t['end'], t['iou']) for t in trazos])
+        for t in trazos:
+            self.assertGreater(t['iou'], 0.8)
+            d = np.subtract(t['end'], t['start'])
+            self.assertLess(abs(d[0]), 0.15 * abs(d[1]))
+
+    def test_bota_por_color(self):
+        # una región de un color, entera y en el marco de la figura: la bota de la derecha
+        z, iz, de, v = C.view_profile(self.img, 10, exclude=['#3a3f4a'], exclude_tol=0.05, color='#1e1e22',
+                                      color_tol=0.06, pick=[0])
+        k = 0.911 / v['alto']                                       # unidades del dibujo
+        centro = (iz + de).mean() / 2 * k
+        self.assertAlmostEqual(abs(centro), 0.078, delta=0.006)
+        self.assertAlmostEqual((de - iz).max() * k, 0.116, delta=0.008)
+        self.assertAlmostEqual(z.min() * k, 0.057, delta=0.008)
+
 
 if __name__ == '__main__':
     unittest.main()

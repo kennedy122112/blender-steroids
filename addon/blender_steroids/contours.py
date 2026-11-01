@@ -833,6 +833,8 @@ def split_thin(f, width):
         mejor, giro_max, d_mejor = i, 35.0, None
         for d in range(6, int(1.5 * r) + 6):
             k = (i + paso * d) % n
+            if junto[k]:
+                break                                       # llegó a otra unión (unas piernas juntas)
             u, v = lazo[k] - lazo[(k - 4) % n], lazo[(k + 4) % n] - lazo[k]
             giro = abs(np.degrees(np.arctan2(u[0] * v[1] - u[1] * v[0], u @ v)))
             if giro > giro_max:
@@ -877,9 +879,20 @@ def split_thin(f, width):
     return cuerpo, finas
 
 
-def _vista(rgba, thin=10, threshold=None):
+def _quitar_colores(rgba, f, exclude, tol=0.1):
+    """La cobertura f sin lo que es de los colores `exclude` (una base de exhibición, unas alas plegadas
+    al costado: piezas que se hacen aparte y no son parte del cuerpo)."""
+    if not exclude:
+        return f
+    colores = [exclude] if isinstance(exclude, str) else list(exclude)
+    quitar = np.max([color_coverage(rgba, c, tol) for c in colores], axis=0)
+    return f * (1 - quitar)
+
+
+def _vista(rgba, thin=10, threshold=None, exclude=None, exclude_tol=0.1):
     """Lo común a una vista: cobertura, cuerpo y partes finas, y el marco de la vista (en píxeles): abajo
-    de toda la silueta (z = 0), su alto (el `height` del spec) y el centro del cuerpo (x = 0)."""
+    de toda la silueta (z = 0), su alto (el `height` del spec) y el centro del cuerpo (x = 0). Lo de los
+    colores `exclude` no cuenta como figura, pero el marco es el de la silueta entera (con ello)."""
     f = coverage(rgba, threshold)
     lazos = trace(f)
     if not lazos:
@@ -887,6 +900,7 @@ def _vista(rgba, thin=10, threshold=None):
     filas = np.concatenate([l[:, 1] for l in lazos])
     arriba, abajo = float(filas.min()), float(filas.max())
     alto = abajo - arriba
+    f = _quitar_colores(rgba, f, exclude, exclude_tol)
     cuerpo, finos = split_thin(f, float(thin) / 100 * alto)
     if not cuerpo.any():
         raise ValueError('No queda cuerpo al quitar las partes finas: baja thin (ahora %s%% del alto)' % thin)
@@ -899,16 +913,27 @@ def _vista(rgba, thin=10, threshold=None):
     return {'f': f, 'cuerpo': cuerpo, 'finos': finos, 'pol': pol, 'x0': x0, 'abajo': abajo, 'alto': alto}
 
 
-def view_profile(rgba, thin=10, threshold=None, levels=600):
+def view_profile(rgba, thin=10, threshold=None, levels=600, exclude=None, exclude_tol=0.1, color=None,
+                 color_tol=0.15, pick=None):
     """El cuerpo de una vista (sin asas ni picos): por cada altura, dónde empieza y dónde termina. Devuelve
     (z, izquierda, derecha) en píxeles, z desde abajo de la silueta entera y x desde el centro del
-    cuerpo, y la vista (_vista)."""
-    v = _vista(rgba, thin, threshold)
-    pol = v['pol'] * [1, -1]                               # y hacia arriba
-    y0, y1 = pol[:, 1].min(), pol[:, 1].max()
+    cuerpo, y la vista (_vista). Con `color`, en vez del cuerpo, las regiones de ese color (una bota, un
+    gorro), enteras y en el mismo marco: `pick` elige regiones, de la de más área a la de menos."""
+    v = _vista(rgba, thin, threshold, exclude, exclude_tol)
+    pols = [v['pol'] * [1, -1]]                            # y hacia arriba
+    if color:
+        regs = sorted(regions(trace(coverage(rgba, threshold, color, color_tol)), min_area=(0.004 * v['alto']) ** 2),
+                      key=lambda g: -abs(area(g['outer'])))
+        if not regs:
+            raise ValueError('No hay nada de color %s en la vista' % color)
+        idx = range(len(regs)) if pick is None else [int(i) for i in (pick if isinstance(pick, (list, tuple)) else [pick])]
+        if any(not 0 <= i < len(regs) for i in idx):
+            raise ValueError('pick fuera de rango: hay %d regiones de color %s (0..%d)' % (len(regs), color, len(regs) - 1))
+        pols = [regs[i]['outer'] * [1, -1] for i in idx]
+    y0, y1 = min(p[:, 1].min() for p in pols), max(p[:, 1].max() for p in pols)
     z, iz, de = [], [], []
     for y in np.linspace(y0 + 0.5, y1 - 0.5, int(levels)):
-        xs = _cortes(pol, y)
+        xs = sorted(x for p in pols for x in _cortes(p, y))
         if len(xs) >= 2:
             z.append(y + v['abajo'])
             iz.append(xs[0] - v['x0'])
@@ -939,15 +964,18 @@ def section_shape(segments=48, roundness=2.0, top=None, threshold=None):
     return np.column_stack([np.sign(c) * np.abs(c) ** e, np.sign(s) * np.abs(s) ** e])
 
 
-def views_body(front, side, height, thin=10, tolerance=0.25, rings=64, threshold=None, levels=400):
+def views_body(front, side, height, thin=10, tolerance=0.25, rings=64, threshold=None, levels=400, exclude=None,
+               exclude_tol=0.1, color=None, color_tol=0.15, pick_front=None, pick_side=None):
     """Cuerpo a partir de dos vistas (frente: X a la derecha; costado, la vista derecha: Y a la derecha),
     sin sus partes finas: en cada altura el frente da dónde empieza y termina en X y el costado en Y, y
     la sección es una forma (section_shape) inscrita en ese rectángulo, así el cuerpo calza con las dos
     siluetas. Para lo que no es plano ni de revolución: una regadera, un ratón, un zapato, un auto de
     juguete, el cuerpo de un pájaro. `height` es el alto de la silueta entera (con asas) en las dos
     imágenes. Devuelve (niveles [[z, x0, x1, y0, y1], ...] en metros, info)."""
-    zf, xl, xr, vf = view_profile(front, thin, threshold)
-    zs, yl, yr, vs = view_profile(side, thin, threshold)
+    zf, xl, xr, vf = view_profile(front, thin, threshold, exclude=exclude, exclude_tol=exclude_tol, color=color,
+                                  color_tol=color_tol, pick=pick_front)
+    zs, yl, yr, vs = view_profile(side, thin, threshold, exclude=exclude, exclude_tol=exclude_tol, color=color,
+                                  color_tol=color_tol, pick=pick_side)
     kf, ks = float(height) / vf['alto'], float(height) / vs['alto']
     zf, xl, xr = zf * kf, xl * kf, xr * kf
     zs, yl, yr = zs * ks, yl * ks, yr * ks
@@ -975,7 +1003,10 @@ def views_body(front, side, height, thin=10, tolerance=0.25, rings=64, threshold
                      round(float(curvas[3].max() - curvas[2].min()), 4), round(float(z1 - z0), 4)],
             'levels': len(salida), 'tolerancePercent': float(tolerance),
             'maxErrorPercent': round(100 * err / float(height), 3), 'targetMet': bool(err <= tol + 1e-12),
-            'viewsMismatchPercent': round(100 * float(desfase) / float(height), 2), 'thinPercent': float(thin)}
+            'viewsMismatchPercent': round(100 * float(desfase) / float(height), 2), 'thinPercent': float(thin),
+            # el marco de cada vista (metros por píxel, centro y abajo en píxeles) y su cobertura, para pintar
+            '_frames': {'front': {'k': kf, 'x0': vf['x0'], 'abajo': vf['abajo'], 'f': vf['f']},
+                        'side': {'k': ks, 'x0': vs['x0'], 'abajo': vs['abajo'], 'f': vs['f']}}}
     return salida, info
 
 
@@ -1127,7 +1158,15 @@ def _trazo(comp, g, cuerpo, grosor):
     if len(xs_) >= 3:
         xy = np.column_stack([xs_, ys_]).astype(np.float64)
         centro = xy.mean(0)
-        _, _, ejes = np.linalg.svd(xy - centro, full_matrices=False)
+        _, sv, ejes = np.linalg.svd(xy - centro, full_matrices=False)
+        # casi tan ancha como larga (una pierna corta entre el cuerpo y una bota): su dirección principal
+        # sale cualquiera. Va de donde se pega al cuerpo hacia su centro
+        union = comp & _crecer(cuerpo, 2)
+        if len(sv) > 1 and sv[0] < 1.2 * sv[1] and union.sum() >= 3:
+            yu, xu = np.nonzero(union)
+            d_ = centro - np.array([xu.mean(), yu.mean()])
+            if np.linalg.norm(d_) > 1e-6:
+                ejes = np.array([d_ / np.linalg.norm(d_)])
         t_ = (xy - centro) @ ejes[0]
         if t_.max() - t_.min() < 3.5 * grosor:
             p = centro + np.outer(np.linspace(t_.min(), t_.max(), max(3, int(t_.max() - t_.min()))), ejes[0])
@@ -1270,7 +1309,8 @@ def _direccion(a, b):
     return [round(float(x), 4) for x in d / max(float(np.linalg.norm(d)), 1e-12)]
 
 
-def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.15, min_length=2.0):
+def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.15, min_length=2.0, exclude=None,
+            exclude_tol=0.1):
     """Partes finas de una vista (asas, picos, alambres, antenas, patas, ramas) como trazos: su eje y su
     ancho en cada punto, en el marco de la vista (x desde el centro del cuerpo, z desde abajo de la
     silueta; en metros si hay `height`, el alto de la silueta entera). Con `color`, solo las partes de
@@ -1281,7 +1321,7 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
     reconstruida contra la de la imagen."""
     import time
     inicio = time.perf_counter()
-    v = _vista(rgba, thin, threshold)
+    v = _vista(rgba, thin, threshold, exclude, exclude_tol)
     k = float(height) / v['alto'] if height else 1.0 / v['alto']
     grosor_max = float(thin) / 100 * v['alto']
     fuente = np.minimum(color_coverage(rgba, color, color_tol), v['f']) if color else v['f']

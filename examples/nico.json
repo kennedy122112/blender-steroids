@@ -1,0 +1,274 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   1000,
+   1000
+  ],
+  "world": {
+   "color": "#e8eaec",
+   "strength": 0.6
+  }
+ },
+ "materials": [
+  {
+   "name": "Piel",
+   "color": "#fad7b9",
+   "roughness": 0.45
+  },
+  {
+   "name": "Pelo",
+   "color": "#462d1e",
+   "roughness": 0.5
+  },
+  {
+   "name": "Impermeable",
+   "color": "#f5c83c",
+   "roughness": 0.35
+  },
+  {
+   "name": "Pantalon",
+   "color": "#3c5aa0",
+   "roughness": 0.55
+  },
+  {
+   "name": "Bota",
+   "color": "#1e1e22",
+   "roughness": 0.3
+  },
+  {
+   "name": "Ojo",
+   "color": "#141416",
+   "roughness": 0.55
+  },
+  {
+   "name": "Boton",
+   "color": "#966e1e",
+   "roughness": 0.4
+  },
+  {
+   "name": "Base",
+   "color": "#3a3f4a",
+   "roughness": 0.5
+  }
+ ],
+ "objects": [
+  {
+   "name": "Cuerpo",
+   "type": "views",
+   "front": "nico/frente.png",
+   "side": "nico/lado.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "roundness": 3,
+   "material": "Piel",
+   "smooth": true,
+   "paint": {
+    "#fad7b9": "Piel",
+    "#462d1e": "Pelo",
+    "#f5c83c": "Impermeable",
+    "#deb028": "Impermeable"
+   }
+  },
+  {
+   "name": "Mangas",
+   "type": "stroke",
+   "image": "nico/frente.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#f5c83c",
+   "material": "Impermeable",
+   "smooth": true
+  },
+  {
+   "name": "Manos",
+   "type": "stroke",
+   "image": "nico/frente.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#fad7b9",
+   "blobs": true,
+   "material": "Piel",
+   "smooth": true
+  },
+  {
+   "name": "Piernas",
+   "type": "stroke",
+   "image": "nico/frente.png",
+   "side": "nico/lado.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#3c5aa0",
+   "material": "Pantalon",
+   "smooth": true
+  },
+  {
+   "name": "BotaA",
+   "type": "views",
+   "front": "nico/frente.png",
+   "side": "nico/lado.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#1e1e22",
+   "colorTolerance": 0.06,
+   "pickFront": [
+    0
+   ],
+   "pickSide": [
+    0
+   ],
+   "material": "Bota",
+   "smooth": true
+  },
+  {
+   "name": "BotaB",
+   "type": "views",
+   "front": "nico/frente.png",
+   "side": "nico/lado.png",
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#1e1e22",
+   "colorTolerance": 0.06,
+   "pickFront": [
+    1
+   ],
+   "pickSide": [
+    0
+   ],
+   "material": "Bota",
+   "smooth": true
+  },
+  {
+   "name": "Base",
+   "type": "lathe",
+   "image": "nico/frente.png",
+   "height": 0.12,
+   "range": [
+    0,
+    0.068
+   ],
+   "material": "Base",
+   "smooth": true
+  },
+  {
+   "name": "Ojos",
+   "type": "outline",
+   "image": "nico/frente.png",
+   "inView": true,
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#1e1e22",
+   "colorTolerance": 0.06,
+   "pick": [
+    2,
+    3
+   ],
+   "plane": "XY",
+   "thickness": 0,
+   "material": "Ojo",
+   "smooth": true,
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "offset": 0.0006,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "Botones",
+   "type": "outline",
+   "image": "nico/frente.png",
+   "inView": true,
+   "height": 0.12,
+   "exclude": [
+    "#3a3f4a"
+   ],
+   "excludeTolerance": 0.05,
+   "color": "#966e1e",
+   "colorTolerance": 0.08,
+   "plane": "XY",
+   "thickness": 0,
+   "material": "Boton",
+   "smooth": true,
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "offset": 0.0006,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "Sol",
+   "type": "light",
+   "light": "area",
+   "energy": 3,
+   "size": 0.4,
+   "location": [
+    0.25,
+    -0.35,
+    0.3
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.06
+   ]
+  },
+  {
+   "name": "Relleno",
+   "type": "light",
+   "light": "area",
+   "energy": 1.5,
+   "size": 0.5,
+   "location": [
+    -0.35,
+    -0.15,
+    0.2
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.06
+   ]
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "frame": [
+    "Cuerpo",
+    "Mangas",
+    "Base"
+   ],
+   "view": [
+    0.5,
+    -1,
+    0.25
+   ],
+   "margin": 1.15
+  }
+ ]
+}

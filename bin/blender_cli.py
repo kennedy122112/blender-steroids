@@ -671,7 +671,7 @@ def cmd_contour(a):
             'coefficients': a.coefficients, 'preview': os.path.abspath(a.preview) if a.preview else None,
             'color': a.color, 'colorTolerance': a.color_tolerance,
             'range': [float(x) for x in a.range.strip('[]').split(',')] if a.range else None,
-            'strokes': a.strokes, 'thin': a.thin}
+            'strokes': a.strokes, 'thin': a.thin, 'exclude': a.exclude}
     args = {k: v for k, v in args.items() if v not in (None, False)}
     # no toca ninguna escena: siempre en un Blender sin interfaz, sin bloquear el abierto
     return headless('contour', args)
@@ -932,6 +932,7 @@ def main(argv):
     sp.add_argument('--range', help='lathe: desde,hasta en fracción del alto (0 = abajo)')
     sp.add_argument('--strokes', action='store_true', help='partes finas (asas, picos, alambres) como trazos para stroke')
     sp.add_argument('--thin', type=float, help='strokes: ancho máximo de una parte fina, en %% del alto (10)')
+    sp.add_argument('--exclude', help='strokes: colores #rrggbb (separados por coma) que no son parte de la figura (una base)')
     sp.add_argument('--preview')
     sp = p('check')
     sp.add_argument('--objects')

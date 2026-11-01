@@ -117,7 +117,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `superellipsoid` | `size: [x, y, z]` total, `roundness`: número o `[lados, arriba-abajo]`, 0 = caja, 1 = elipsoide, >1 puntiaguda. Cabezas y cuerpos de vinilo, cojines, piedras, jabones |
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
-| `views` | Cuerpo desde dos vistas: `front` (imagen de frente, X a la derecha) y `side` (vista derecha, Y a la derecha), `height` (alto de la silueta entera, en metros), `roundness` (2 = sección elíptica; más = más cuadrada) o `top` (imagen de la vista de arriba para la forma de la sección), `thin` (10), `segments`, `rings`. Regaderas, ratones, zapatos, autos de juguete, cuerpos de pájaro. Ver «Volumen desde dos vistas» |
+| `views` | Cuerpo desde dos vistas: `front` (imagen de frente, X a la derecha) y `side` (vista derecha, Y a la derecha), `height` (alto de la silueta entera, en metros), `roundness` (2 = sección elíptica; más = más cuadrada) o `top` (imagen de la vista de arriba para la forma de la sección), `thin` (10), `segments`, `rings`, `exclude` (colores que no son de la figura: una base), `paint` (pinta cada cara con el color de las vistas), `color` + `pickFront`/`pickSide` (el volumen de una región de color: una bota). Regaderas, ratones, zapatos, autos de juguete, cuerpos de pájaro. Ver «Volumen desde dos vistas» |
 | `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas, brazos, orejas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, la otra vista (`side` si view es front, `front` si es side: de ahí salen su profundidad y su grosor de canto) o `flat` (aplana de canto), `near` [[x, z], …] (elige por posición), `blobs: true` (las partes redondas como esferas), `segments`. Ver «Volumen desde dos vistas» |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
@@ -299,6 +299,26 @@ tubo se mete en él, sin huecos.
   con `stroke` desde el costado y su hoja con `outline` `inView` de costado; cara, brillos y mejillas por
   color con `project: "view"`, y la panza. Los brazos saludan desde un `empty` por hombro y la cola se
   mueve desde su raíz. Calza 0.976 de frente y 0.981 de costado.
+- **Una base u otra pieza de otro color pegada a la figura** (la base redonda de una figura de vinilo, unas
+  alas plegadas al costado): `exclude: ["#rrggbb"]` (con `excludeTolerance`, 0.1; bájala si un color
+  vecino es parecido, como unas botas negras sobre una base gris oscura) la saca de la figura en
+  `views`, `stroke` y `outline` con `inView`. El marco no cambia: `height` sigue siendo el alto de la
+  silueta entera, así todas las piezas encajan. La base misma: un `lathe` con `range` desde la imagen.
+- **Varios colores en un cuerpo** (pelo, piel y ropa en la cabeza y el torso de una figura): `paint:
+  {"#rrggbb": "Material", ...}` pinta cada cara con el material del color más cercano de la vista que
+  la mira (las de adelante, del frente; costados, atrás y arriba, del costado: el pelo cubre la nuca y
+  deja la cara). El borde entre colores se subdivide (`paintRefine`, 2) para que no salga en escalera, y
+  con `paint` el cuerpo tiene más caras por defecto. Un detalle de otro color (los ojos, unos botones)
+  toma el color de alrededor: hazlo aparte con `outline` + `attach`. Lo que en una vista tapa al cuerpo
+  (una mano delante del costado) píntalo en el dibujo con un tono de sombra: si no, pinta ese costado.
+- **Una pieza de un color con volumen** (una bota, un gorro): `views` con `color` y `pickFront`/`pickSide`
+  (la región de ese color en cada vista, de mayor a menor área) sale entera y en su lugar.
+- **Partes juntas** (dos piernas a pocos mm): cada unión se corta sola, y una parte casi cuadrada (una
+  pierna corta entre el cuerpo y una bota) va de donde se pega hacia su centro.
+- **Una figura de vinilo sobre su base** (`examples/nico.json`, un personaje original): cabeza y torso con
+  `views` pintado (pelo, piel, impermeable), mangas y piernas con `stroke` por color, manos con `blobs`,
+  botas con `views` por color, la base con `lathe` y `exclude`, ojos y botones como calco. Calza 0.984 de
+  frente y 0.972 de costado.
 - **Una figura de vinilo** (`examples/menta.json`, una criatura original de cabeza grande, en pose): una
   oreja de pie y otra caída (con su interior rosado pegado a cada oreja), un brazo que saluda y otro
   estirado hacia adelante, patas cortas y una cola de pompón (`blobs`). Calza 0.980 de frente y 0.958 de
