@@ -1,0 +1,146 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   1200,
+   900
+  ],
+  "world": {
+   "color": "#c9c6bd",
+   "strength": 0.9
+  }
+ },
+ "materials": [
+  {
+   "name": "Chapa",
+   "color": "#2f8f83",
+   "metallic": 0.35,
+   "roughness": 0.4
+  },
+  {
+   "name": "Bronce",
+   "color": "#c4923e",
+   "metallic": 0.4,
+   "roughness": 0.35
+  },
+  {
+   "name": "Piso",
+   "color": "#d8d2c4",
+   "roughness": 0.9
+  }
+ ],
+ "objects": [
+  {
+   "name": "Cuerpo",
+   "type": "views",
+   "front": "regadera/frente.png",
+   "side": "regadera/lado.png",
+   "height": 0.3,
+   "segments": 64,
+   "material": "Chapa",
+   "smooth": true
+  },
+  {
+   "name": "Asa",
+   "type": "stroke",
+   "image": "regadera/frente.png",
+   "height": 0.3,
+   "pick": [
+    0
+   ],
+   "material": "Chapa",
+   "smooth": true
+  },
+  {
+   "name": "Pico",
+   "type": "stroke",
+   "image": "regadera/frente.png",
+   "height": 0.3,
+   "color": "#2f8f83",
+   "pick": [
+    1
+   ],
+   "material": "Chapa",
+   "smooth": true
+  },
+  {
+   "name": "Flor",
+   "type": "lathe",
+   "profile": [
+    [
+     0.005,
+     0
+    ],
+    [
+     0.017,
+     0.011
+    ],
+    [
+     0.019,
+     0.012
+    ],
+    [
+     0.019,
+     0.017
+    ],
+    [
+     0,
+     0.017
+    ]
+   ],
+   "segments": 48,
+   "location": [
+    0.1877,
+    0,
+    0.1815
+   ],
+   "rotation": [
+    0,
+    42.2,
+    0
+   ],
+   "material": "Bronce",
+   "smooth": true
+  },
+  {
+   "name": "Piso",
+   "type": "plane",
+   "size": 3,
+   "material": "Piso"
+  },
+  {
+   "name": "Sol",
+   "type": "light",
+   "light": "area",
+   "energy": 60,
+   "size": 1.5,
+   "location": [
+    -0.6,
+    -0.9,
+    0.9
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.12
+   ]
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "frame": [
+    "Cuerpo",
+    "Asa",
+    "Pico",
+    "Flor"
+   ],
+   "view": [
+    0.6,
+    -1,
+    0.35
+   ],
+   "margin": 1.25
+  }
+ ]
+}

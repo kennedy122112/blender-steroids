@@ -350,5 +350,90 @@ class Torno(unittest.TestCase):
             C.lathe_profile(imagen(silueta_jarron()), side='arriba')
 
 
+def arco(R, w, cx=0.0, cy=0.0, n=200):
+    """Asa en semicírculo (mitad de arriba) de radio medio R y ancho w."""
+    t = np.linspace(0, np.pi, n)
+    afuera = np.column_stack([cx + (R + w / 2) * np.cos(t), cy + (R + w / 2) * np.sin(t)])
+    adentro = np.column_stack([cx + (R - w / 2) * np.cos(t[::-1]), cy + (R - w / 2) * np.sin(t[::-1])])
+    return np.vstack([afuera, adentro])
+
+
+def barra(a, b, w0, w1):
+    """Trazo recto de a a b que se angosta de w0 a w1."""
+    a, b = np.array(a, float), np.array(b, float)
+    u = (b - a) / np.linalg.norm(b - a)
+    n = np.array([-u[1], u[0]])
+    return np.array([a + n * w0 / 2, b + n * w1 / 2, b - n * w1 / 2, a - n * w0 / 2])
+
+
+VERDE = (0.18, 0.56, 0.51)
+
+
+class Vistas(unittest.TestCase):
+    """Prueba de la regadera: un cuerpo desde dos vistas, sin el pico que le sale de un costado."""
+
+    def setUp(self):
+        self.frente = pintar([([rect(-0.2, -0.4, 0.2, 0.1)], VERDE), ([barra((0.12, -0.25), (0.42, 0.04), 0.05, 0.03)], VERDE)])
+        self.lado = pintar([([rect(-0.12, -0.4, 0.12, 0.1)], VERDE)])
+
+    def test_el_pico_no_ensancha_el_cuerpo(self):
+        niveles, info = C.views_body(self.frente, self.lado, 0.5)
+        self.assertTrue(info['targetMet'])
+        self.assertAlmostEqual(info['size'][0], 0.4, delta=0.006)
+        self.assertAlmostEqual(info['size'][1], 0.24, delta=0.006)
+        self.assertAlmostEqual(info['size'][2], 0.5, delta=0.006)
+        derecha = np.array([n[2] for n in niveles])
+        self.assertLess(np.abs(derecha - 0.2).max(), 0.006)       # ni un bulto donde nace el pico
+        self.assertLess(info['viewsMismatchPercent'], 1)
+
+    def test_vistas_que_no_coinciden(self):
+        # el frente tiene una antena arriba y el costado no: el alto entero no es el mismo objeto
+        antena = pintar([([rect(-0.2, -0.4, 0.2, 0.1)], VERDE), ([rect(-0.01, 0.05, 0.01, 0.3)], VERDE)])
+        _, info = C.views_body(antena, self.lado, 0.7)
+        self.assertGreater(info['viewsMismatchPercent'], 2)
+
+    def test_seccion(self):
+        e = C.section_shape(64, 2.0)
+        self.assertLess(np.abs(np.hypot(e[:, 0], e[:, 1]) - 1).max(), 1e-9)   # elipse: círculo unitario
+        cuadrada = C.section_shape(64, 8.0)
+        self.assertGreater(np.abs(cuadrada[8]).min(), 0.9)                    # a 45° casi llega a la esquina
+
+
+class Trazos(unittest.TestCase):
+    """Un asa en arco sobre un cuerpo: su eje, su ancho y que se mete en el cuerpo por las dos puntas."""
+
+    def setUp(self):
+        self.img = pintar([([rect(-0.3, -0.45, 0.3, 0.0)], VERDE), ([arco(0.2, 0.04, 0, -0.02)], VERDE)])
+
+    def test_asa(self):
+        trazos, info = C.strokes(self.img, height=0.65)
+        self.assertEqual(len(trazos), 1)
+        t = trazos[0]
+        self.assertEqual(sorted(t['attached']), ['end', 'start'])
+        self.assertGreater(t['iou'], 0.9)
+        self.assertGreater(min(t['radius']), 0.016)
+        self.assertLess(max(t['radius']), 0.024)
+        self.assertTrue(0.58 < t['length'] < 0.72, t['length'])
+        # el eje pasa por el radio medio del arco (fuera del cuerpo)
+        p = np.array(t['points'])
+        fuera = p[p[:, 1] > 0.47]                                  # z desde abajo de la silueta
+        r = np.hypot(fuera[:, 0], fuera[:, 1] - (0.45 - 0.02))
+        self.assertLess(np.abs(r - 0.2).max(), 0.006)
+
+    def test_pico_con_direccion(self):
+        img = pintar([([rect(-0.2, -0.4, 0.2, 0.1)], VERDE), ([barra((0.12, -0.25), (0.42, 0.04), 0.05, 0.03)], VERDE)])
+        trazos, _ = C.strokes(img, height=0.5)
+        self.assertEqual(len(trazos), 1)
+        t = trazos[0]
+        u = np.array([0.30, 0.29]) / np.hypot(0.30, 0.29)
+        libre = 'startDirection' if t['attached'] == ['end'] else 'endDirection'
+        self.assertGreater(np.dot(t[libre], u), 0.99)
+        self.assertGreater(t['radius'][1], t['radius'][0] * 1.3)  # se angosta hacia la punta
+
+    def test_sin_partes_finas(self):
+        trazos, _ = C.strokes(pintar([([rect(-0.2, -0.4, 0.2, 0.1)], VERDE)]))
+        self.assertEqual(trazos, [])
+
+
 if __name__ == '__main__':
     unittest.main()
