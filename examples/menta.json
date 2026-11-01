@@ -1,0 +1,310 @@
+{
+ "removeDefaults": true,
+ "scene": {
+  "engine": "eevee",
+  "resolution": [
+   1000,
+   1000
+  ],
+  "fps": 24,
+  "frames": [
+   1,
+   96
+  ],
+  "world": {
+   "color": "#e4e8ea",
+   "strength": 0.5
+  }
+ },
+ "materials": [
+  {
+   "name": "Menta",
+   "color": "#56c4b2",
+   "roughness": 0.45
+  },
+  {
+   "name": "Rosa",
+   "color": "#f296aa",
+   "roughness": 0.5
+  },
+  {
+   "name": "Crema",
+   "color": "#f0d6a8",
+   "roughness": 0.8
+  },
+  {
+   "name": "Ojo",
+   "color": "#1c1a22",
+   "roughness": 0.6
+  },
+  {
+   "name": "Brillo",
+   "color": "#ffffff",
+   "roughness": 0.3
+  }
+ ],
+ "objects": [
+  {
+   "name": "Cuerpo",
+   "type": "views",
+   "front": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "segments": 64,
+   "material": "Menta",
+   "smooth": true
+  },
+  {
+   "name": "HombroI",
+   "type": "empty",
+   "location": [
+    0.0357,
+    -0.005,
+    0.0792
+   ],
+   "size": 0.015
+  },
+  {
+   "name": "OrejaArriba",
+   "type": "stroke",
+   "image": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "material": "Menta",
+   "smooth": true,
+   "near": [
+    0.038,
+    0.251
+   ]
+  },
+  {
+   "name": "OrejaCaida",
+   "type": "stroke",
+   "image": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "flat": 0.4,
+   "material": "Menta",
+   "smooth": true,
+   "near": [
+    -0.112,
+    0.175
+   ]
+  },
+  {
+   "name": "BrazoSaluda",
+   "type": "stroke",
+   "image": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "location": [
+    0,
+    -0.008,
+    0
+   ],
+   "material": "Menta",
+   "smooth": true,
+   "parent": "HombroI",
+   "near": [
+    0.078,
+    0.108
+   ]
+  },
+  {
+   "name": "BrazoAdelante",
+   "type": "stroke",
+   "image": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "material": "Menta",
+   "smooth": true,
+   "near": [
+    -0.065,
+    0.066
+   ]
+  },
+  {
+   "name": "Patas",
+   "type": "stroke",
+   "image": "menta/frente.png",
+   "side": "menta/lado.png",
+   "height": 0.25,
+   "thin": 12,
+   "material": "Menta",
+   "smooth": true,
+   "near": [
+    [
+     -0.023,
+     0.003
+    ],
+    [
+     0.023,
+     0.003
+    ]
+   ]
+  },
+  {
+   "name": "Pompon",
+   "type": "stroke",
+   "image": "menta/lado.png",
+   "view": "side",
+   "height": 0.25,
+   "thin": 12,
+   "blobs": true,
+   "material": "Crema",
+   "smooth": true
+  },
+  {
+   "name": "DentroA",
+   "type": "outline",
+   "image": "menta/frente.png",
+   "inView": true,
+   "height": 0.25,
+   "thin": 12,
+   "color": "#f296aa",
+   "pick": [
+    0
+   ],
+   "plane": "XY",
+   "thickness": 0.0008,
+   "material": "Rosa",
+   "attach": {
+    "to": "OrejaArriba",
+    "side": "front",
+    "offset": 0.0005,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "DentroB",
+   "type": "outline",
+   "image": "menta/frente.png",
+   "inView": true,
+   "height": 0.25,
+   "thin": 12,
+   "color": "#f296aa",
+   "pick": [
+    1
+   ],
+   "plane": "XY",
+   "thickness": 0.0008,
+   "material": "Rosa",
+   "attach": {
+    "to": "OrejaCaida",
+    "side": "front",
+    "offset": 0.0005,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "Cara",
+   "type": "outline",
+   "image": "menta/frente.png",
+   "inView": true,
+   "height": 0.25,
+   "thin": 12,
+   "color": "#1c1a22",
+   "plane": "XY",
+   "thickness": 0.0008,
+   "material": "Ojo",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "offset": 0.0006,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "Brillos",
+   "type": "outline",
+   "image": "menta/frente.png",
+   "inView": true,
+   "height": 0.25,
+   "thin": 12,
+   "color": "#ffffff",
+   "colorTolerance": 0.06,
+   "plane": "XY",
+   "thickness": 0.0008,
+   "material": "Brillo",
+   "attach": {
+    "to": "Cuerpo",
+    "side": "front",
+    "offset": 0.0012,
+    "wrap": true,
+    "project": "view"
+   }
+  },
+  {
+   "name": "Sol",
+   "type": "light",
+   "light": "area",
+   "energy": 6,
+   "size": 0.6,
+   "location": [
+    0.4,
+    -0.55,
+    0.55
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.12
+   ]
+  },
+  {
+   "name": "Relleno",
+   "type": "light",
+   "light": "area",
+   "energy": 3,
+   "size": 0.8,
+   "location": [
+    -0.55,
+    -0.25,
+    0.3
+   ],
+   "lookAt": [
+    0,
+    0,
+    0.12
+   ]
+  },
+  {
+   "name": "Camara",
+   "type": "camera",
+   "frame": [
+    "Cuerpo",
+    "OrejaArriba",
+    "OrejaCaida",
+    "BrazoSaluda",
+    "BrazoAdelante",
+    "Patas"
+   ],
+   "view": [
+    0.55,
+    -1,
+    0.2
+   ],
+   "margin": 1.15
+  }
+ ],
+ "animation": [
+  {
+   "object": "HombroI",
+   "property": "rotation",
+   "axis": "y",
+   "motion": {
+    "kind": "oscillate",
+    "frequency": 2,
+    "amplitude": 20
+   }
+  }
+ ]
+}

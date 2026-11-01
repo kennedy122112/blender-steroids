@@ -118,7 +118,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `tube` | `points: [[x,y,z]…]` o `curve: [p0, p1, p2(, p3)]` (Bézier, `steps` tramos); `radii`: `[inicio, fin]` o un radio por punto (o `radius`); `flat` < 1 lo aplana (cintas, bufandas, hojas); `twist`°; `cap`; `segments`. Colas, cuernos, mechones, asas, cables, tentáculos, ribetes. Puntos en coordenadas del mundo con `location` en 0 |
 | `lathe` | `profile: [[radio, z]…]` de abajo arriba, girado alrededor de Z (radio 0 cierra en punta); `segments`. Jarrones, botellas, faroles, troncos, peones, lámparas. O `image`: el objeto visto de lado, del que se mide el perfil (ver «Torno desde una foto») |
 | `views` | Cuerpo desde dos vistas: `front` (imagen de frente, X a la derecha) y `side` (vista derecha, Y a la derecha), `height` (alto de la silueta entera, en metros), `roundness` (2 = sección elíptica; más = más cuadrada) o `top` (imagen de la vista de arriba para la forma de la sección), `thin` (10), `segments`, `rings`. Regaderas, ratones, zapatos, autos de juguete, cuerpos de pájaro. Ver «Volumen desde dos vistas» |
-| `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas, brazos, orejas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, la otra vista (`side` si view es front, `front` si es side: de ahí salen su profundidad y su grosor de canto) o `flat` (aplana de canto), `segments`. Ver «Volumen desde dos vistas» |
+| `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas, brazos, orejas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, la otra vista (`side` si view es front, `front` si es side: de ahí salen su profundidad y su grosor de canto) o `flat` (aplana de canto), `near` [[x, z], …] (elige por posición), `blobs: true` (las partes redondas como esferas), `segments`. Ver «Volumen desde dos vistas» |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
 | `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla; `color` toma una parte por su color, `pick` elige regiones, `inView` la deja en su lugar de la vista. Ver «Siluetas» |
@@ -266,9 +266,23 @@ tubo se mete en él, sin huecos.
 - **Partes que se ramifican** (patas sobre una rama, una rama con ramitas, una antena en Y): un trazo por
   rama. Primero el más largo; cada rama que sale de él trae `parent` (su índice) y se mete en su tubo.
   Las patas de frente, que se juntan sobre una rama vista de punta, se separan mejor por `color`.
-- **`pick` va por largo**: los índices son del más largo al más corto, así que si dos partes miden casi
-  lo mismo (un pico y una pata) o cambias la imagen, el orden puede cambiar. Revisa la lista de trazos en
-  `outlines` (o con `contour -Strokes`) después de construir, y prefiere `color` cuando la parte lo tenga.
+- **Elige por posición con `near`** cuando hay partes de casi el mismo largo (un par de brazos, brazos y
+  patas, un pico y una pata): `"near": [x, z]` (o una lista de puntos) toma, para cada punto, el trazo
+  que pasa más cerca, en el marco de la vista (como `start`/`end`: la mano, el pie, la punta de la
+  oreja). `pick` va por largo, y entre partes casi iguales el orden cambia con cualquier detalle (en Lumo,
+  0.0784 contra 0.0778). `color` también sirve si la parte lo tiene.
+- **Partes redondas pegadas al cuerpo** (una cola de pompón, un botón, una nariz de bola): no son trazos;
+  `contour -Strokes` las lista en `blobs` (centro y radio del círculo que sigue su borde libre, aunque
+  tengan una astilla pegada) y las dibuja en blanco. `{"type": "stroke", "blobs": true, ...}` las hace
+  esferas en su lugar de la vista (con `pick` si hay varias).
+- **Patas cortas bajo un cuerpo redondo**: la unión se corta siguiendo la curva del cuerpo (no la
+  recta entre las esquinas, que se llevaba una cuña de la panza). Si las patas casi no asoman y están
+  juntas o pegadas al borde del cuerpo, la parte visible no dice hacia dónde van: sepáralas un poco en
+  el dibujo o ponlas a mano.
+- **Partes casi horizontales** (un brazo estirado hacia adelante): con la otra vista se emparejan por la
+  fracción del largo desde donde se pegan al cuerpo, no por la altura (un poco de diferencia de altura
+  entre las vistas las acortaba). Para emparejarse, las dos vistas deben mostrar la parte pegada y
+  terminando a alturas parecidas.
 - **Brazos, patas y orejas cortos y gruesos** (un personaje): salen por su eje principal, con la punta
   redonda (la mano, el pie) y sin dar la vuelta en ella. Que su ancho quede bajo `thin` (12-15 si son
   gruesos). Una parte fina y chica (una oreja vista de canto) también se separa del cuerpo.
@@ -284,7 +298,11 @@ tubo se mete en él, sin huecos.
   orejas (por `color`), brazos y patas con `stroke` desde el frente y `side` para su profundidad; cola
   con `stroke` desde el costado y su hoja con `outline` `inView` de costado; cara, brillos y mejillas por
   color con `project: "view"`, y la panza. Los brazos saludan desde un `empty` por hombro y la cola se
-  mueve desde su raíz. Calza 0.97 de frente y 0.977 de costado.
+  mueve desde su raíz. Calza 0.976 de frente y 0.981 de costado.
+- **Una figura de vinilo** (`examples/menta.json`, una criatura original de cabeza grande, en pose): una
+  oreja de pie y otra caída (con su interior rosado pegado a cada oreja), un brazo que saluda y otro
+  estirado hacia adelante, patas cortas y una cola de pompón (`blobs`). Calza 0.980 de frente y 0.958 de
+  costado. De una sola foto o un render de 3/4 no se puede medir: dibuja antes las dos vistas.
 - **No es para** formas con huecos que atraviesan el cuerpo de lado a lado, ni para personajes con poses
   que no se leen en dos vistas (brazos cruzados delante del cuerpo, piernas dobladas): ahí, primitivas.
 

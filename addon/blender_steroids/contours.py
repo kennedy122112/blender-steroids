@@ -854,8 +854,23 @@ def split_thin(f, width):
             if j - i >= 2:
                 a_, b_ = esquina(i, -1), esquina(j, 1)
                 idx = np.arange(a_, a_ + ((b_ - a_) % n) + 1) % n
+                # entre las dos esquinas el cuerpo sigue su curva, no la recta: con la recta, unas patas
+                # cortas bajo un cuerpo redondo se llevaban una cuña de su panza. Una curva de Hermite con
+                # la dirección del borde al llegar a cada esquina (la recta si el borde va casi de costado)
+                p0, p1 = lazo[a_], lazo[b_]
+                ta, tb = p0 - lazo[(a_ - 8) % n], lazo[(b_ + 8) % n] - p1
+                largo = np.linalg.norm(p1 - p0)
+                ta, tb = ta / max(np.linalg.norm(ta), 1e-9), tb / max(np.linalg.norm(tb), 1e-9)
+                cuerda = (p1 - p0) / max(largo, 1e-9)
+                tt = np.linspace(1, 0, 24)[1:-1, None]
+                if min(ta @ cuerda, tb @ cuerda) > 0.25:
+                    cierre = ((2 * tt ** 3 - 3 * tt ** 2 + 1) * p0 + (tt ** 3 - 2 * tt ** 2 + tt) * largo * ta
+                              + (-2 * tt ** 3 + 3 * tt ** 2) * p1 + (tt ** 3 - tt ** 2) * largo * tb)
+                else:
+                    cierre = np.zeros((0, 2))
                 # solo cerca de la parte fina: si una esquina se buscó lejos, no se lleva un trozo del cuerpo
-                munon = rasterize([lazo[idx] * [1, -1]], m.shape, (0.0, 0.0), 1.0) & cuerpo & cerca_fina
+                munon = rasterize([np.vstack([lazo[idx], cierre]) * [1, -1]], m.shape, (0.0, 0.0), 1.0) \
+                    & cuerpo & cerca_fina
                 cuerpo &= ~munon
                 finas |= munon
             i = j + 1
@@ -1104,7 +1119,11 @@ def _trazo(comp, g, cuerpo, grosor):
     p = _camino_mas_largo(sk)
     # una parte corta y gruesa (un brazo, una pata, una oreja de un personaje) casi no tiene esqueleto: sus
     # ramitas a las esquinas lo doblan en V. Su eje es la dirección principal de sus píxeles.
-    ys_, xs_ = np.nonzero(comp)
+    # (la dirección, del núcleo grueso de la parte: una pata corta bajo un cuerpo redondo asoma también
+    # como una astilla por su costado, que la torcía)
+    q = int(0.3 * grosor)
+    nucleo = _crecer(_encoger(comp, q), q) & comp if q >= 2 else comp
+    ys_, xs_ = np.nonzero(nucleo if nucleo.sum() >= 3 else comp)
     if len(xs_) >= 3:
         xy = np.column_stack([xs_, ys_]).astype(np.float64)
         centro = xy.mean(0)
@@ -1116,6 +1135,9 @@ def _trazo(comp, g, cuerpo, grosor):
         return None
     largo = np.linalg.norm(np.diff(p, axis=0), axis=1).sum()
     p = _media_movil(_por_arco(p, max(3, int(np.ceil(largo / 1.5)))), 7)
+    # junto al cuerpo el ancho no se mide (el rincón de la unión lo ensancha); en una parte corta (una pata
+    # que apenas asoma) esa franja se achica, si no la cubriría entera
+    junto = _crecer(cuerpo, max(1, int(min(0.4 * grosor, 0.25 * largo))))
     # las puntas del esqueleto se doblan hacia las esquinas (o hacia el ancho de un remate): se cortan
     # y el trazo se alarga recto, con la dirección del tramo anterior
     s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))])
@@ -1124,7 +1146,7 @@ def _trazo(comp, g, cuerpo, grosor):
     # el esqueleto se corre hacia un lado donde la parte fina cambia de forma (cerca de una unión): cada
     # punto se lleva al medio de su sección, medido en la imagen
     for _ in range(2):
-        _, desvio = _secciones(g, p, cuerpo, grosor)
+        _, desvio = _secciones(g, p, cuerpo, grosor, junto)
         desvio = np.nan_to_num(desvio)
         # mediana móvil de un ancho: donde sale otra rama el medio de la sección se corre de golpe hacia
         # ella; eso no es el eje y se ignora
@@ -1137,7 +1159,6 @@ def _trazo(comp, g, cuerpo, grosor):
         p = p + np.column_stack([-tg[:, 1], tg[:, 0]]) * desvio[:, None]
         p = _media_movil(p, 7)
     pegado = []
-    junto = _crecer(cuerpo, max(1, int(0.4 * grosor)))
     # los puntos junto al cuerpo no se pudieron centrar: se quitan y se llega al cuerpo siguiendo la parte
     afuera = np.array([not (0 <= int(round(c[1])) < junto.shape[0] and 0 <= int(round(c[0])) < junto.shape[1]
                             and junto[int(round(c[1])), int(round(c[0]))]) for c in p])
@@ -1190,7 +1211,7 @@ def _trazo(comp, g, cuerpo, grosor):
             pegado.append('end' if lado else 'start')
     largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
     p = _por_arco(p, max(4, int(np.ceil(largo))))
-    anchos, _ = _secciones(g, p, cuerpo, grosor)
+    anchos, _ = _secciones(g, p, cuerpo, grosor, junto)
     # dentro del cuerpo (o donde no se pudo medir) vale el ancho medido más cercano
     ok = np.isfinite(anchos)
     if not ok.any():
@@ -1201,6 +1222,47 @@ def _trazo(comp, g, cuerpo, grosor):
         anchos[4:-4] = np.median(np.lib.stride_tricks.sliding_window_view(anchos, 9), axis=1)
     anchos = _media_movil(np.column_stack([anchos]), 5)[:, 0]
     return p, anchos, pegado
+
+
+def _bola(comp, cuerpo):
+    """Círculo que mejor sigue el borde libre de una parte (lo que no toca el cuerpo): (centro, radio,
+    IoU del disco contra la parte, fuera del cuerpo), o None si la parte no es redonda. Se busca el
+    círculo que sigue la mayor parte del borde (RANSAC con semilla fija): una astilla pegada a la bola
+    (un pompón junto a la espalda) no lo tuerce."""
+    borde = comp & ~_encoger(comp, 1) & ~_crecer(cuerpo, 2)
+    ys, xs = np.nonzero(borde)
+    if len(xs) < 20:
+        return None
+    pts = np.column_stack([xs, ys]).astype(np.float64)
+
+    def ajustar(q):
+        A = np.column_stack([q, np.ones(len(q))])
+        sol = np.linalg.lstsq(A, -(q ** 2).sum(1), rcond=None)[0]
+        c = -sol[:2] / 2
+        r2 = c @ c - sol[2]
+        return (c, float(np.sqrt(r2))) if r2 > 0 else (None, 0.0)
+    rng = np.random.default_rng(0)
+    mejor, dentro_max = None, 0
+    for _ in range(200):
+        c, r = ajustar(pts[rng.choice(len(pts), 3, replace=False)])
+        if c is None or r > max(comp.shape):
+            continue
+        dentro = np.abs(np.hypot(*(pts - c).T) - r) < max(1.5, 0.04 * r)
+        if dentro.sum() > dentro_max:
+            mejor, dentro_max = dentro, int(dentro.sum())
+    if mejor is None or dentro_max < max(20, 0.5 * len(pts)):
+        return None
+    c, r = ajustar(pts[mejor])
+    if c is None:
+        return None
+    # que el arco seguido dé al menos media vuelta (si no, es el borde de otra cosa)
+    ang = np.sort(np.arctan2(*(pts[mejor] - c).T[::-1]))
+    if 2 * np.pi - np.diff(np.concatenate([ang, ang[:1] + 2 * np.pi])).max() < np.pi:
+        return None
+    yy, xx = np.mgrid[:comp.shape[0], :comp.shape[1]]
+    disco = (np.hypot(xx - c[0], yy - c[1]) <= r) & ~cuerpo
+    iou = float((disco & comp).sum() / max((disco | comp).sum(), 1))
+    return (float(c[0]), float(c[1])), r, iou
 
 
 def _direccion(a, b):
@@ -1225,7 +1287,7 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
     fuente = np.minimum(color_coverage(rgba, color, color_tol), v['f']) if color else v['f']
     finos = v['finos'] & (fuente > 0.5)
     g = fuente * ~v['cuerpo']
-    salida = []
+    salida, bolas = [], []
     h, w = finos.shape
     area_min = (0.008 * v['alto']) ** 2
     pad = int(grosor_max) + 4
@@ -1248,13 +1310,20 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
                 e = _encoger(e, 1)
                 grosor += 2
             r = _trazo(c_, g[rec_] * ~apoyo[rec_] * _crecer(c_, 2), apoyo[rec_], max(grosor, 2))
-            if r is None:
+            if r is not None:
+                p, anchos, pegado = r
+                largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
+                ancho = float(np.median(anchos))
+            if r is None or largo < min_length * ancho or ancho < 2.5:
+                # una mancha o una astilla, no un trazo; si es redonda (un pompón, un botón, una nariz de
+                # bola) se informa como bola: su centro y radio, del círculo que mejor sigue su borde libre
+                bola = _bola(c_, apoyo[rec_]) if padre is None else None
+                if bola is not None:
+                    (cx, cy), rr, iou_b = bola
+                    bolas.append({'center': [round(float((cx + x0 - v['x0']) * k), 5),
+                                             round(float((v['abajo'] - cy - y0) * k), 5)],
+                                  'radius': round(float(rr * k), 5), 'iou': round(iou_b, 3)})
                 continue
-            p, anchos, pegado = r
-            largo = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
-            ancho = float(np.median(anchos))
-            if largo < min_length * ancho or ancho < 2.5:
-                continue                                    # una mancha o una astilla, no un trazo
             # IoU de la silueta reconstruida (fuera de lo ya hecho) contra la parte medida
             tg = np.gradient(p, axis=0)
             tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-9)
@@ -1280,11 +1349,16 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
             pts = np.column_stack([(p[:, 0] - v['x0']) * k, (v['abajo'] - p[:, 1]) * k, anchos * k / 2])
             # más anillos donde el ancho cambia rápido: una punta redonda (una mano, un pie) con pocos
             # anillos sale como un cono
-            u = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
-                                                + 3 * np.abs(np.diff(pts[:, 2])))])
+            arco = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1))])
+            u = arco + np.concatenate([[0], np.cumsum(3 * np.abs(np.diff(pts[:, 2])))])
             n = int(np.clip(np.ceil(u[-1] / k / max(1.5, 0.2 * ancho)), 8, 200))
             ui = np.linspace(0, u[-1], n)
-            sal = np.column_stack([np.interp(ui, u, pts[:, c]) for c in range(3)])
+            si = np.interp(ui, u, arco)
+            # la posición, de la línea con un vértice cada 0.3 anchos: el eje viene de a 1 px, y con anillos
+            # a fracciones de px su ruido inclinaba la tangente en la punta (los últimos anillos se torcían)
+            sc = np.linspace(0, arco[-1], max(4, int(np.ceil(arco[-1] / k / max(2.0, 0.3 * ancho)))))
+            gx, gz = np.interp(sc, arco, pts[:, 0]), np.interp(sc, arco, pts[:, 1])
+            sal = np.column_stack([np.interp(si, sc, gx), np.interp(si, sc, gz), np.interp(ui, u, pts[:, 2])])
             salida.append({'points': [[round(float(a), 5), round(float(b), 5)] for a, b in sal[:, :2]],
                            'radii': [round(float(x), 5) for x in sal[:, 2]],
                            'length': round(largo * k, 4), 'attached': pegado, '_padre': padre,
@@ -1319,7 +1393,8 @@ def strokes(rgba, height=None, thin=10, threshold=None, color=None, color_tol=0.
         padre = s.pop('_padre')
         if padre is not None:
             s['parent'] = nuevo[padre]
-    info = {'strokes': len(salida), 'thinPercent': float(thin),
+    bolas.sort(key=lambda b: -b['radius'])
+    info = {'strokes': len(salida), 'thinPercent': float(thin), 'blobs': bolas,
             'elapsedMs': round(1000 * (time.perf_counter() - inicio), 1),
             '_frame': {'k': k, 'x0': v['x0'], 'abajo': v['abajo']}, '_body': v['pol']}
     return salida, info

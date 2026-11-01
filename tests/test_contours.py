@@ -578,5 +578,43 @@ class Personaje(unittest.TestCase):
         self.assertLess(r.max(), 1.1 * np.median(r))
 
 
+def elipse(a, c, cx=0.0, cy=0.0, n=400):
+    t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    return np.column_stack([cx + a * np.cos(t), cy + c * np.sin(t)])
+
+
+class Vinilo(unittest.TestCase):
+    """Prueba de la figura de vinilo: patas cortas bajo un cuerpo redondo y una cola de pompón."""
+
+    def test_patas_bajo_cuerpo_redondo(self):
+        # el corte de la unión sigue la curva del cuerpo (con la recta se llevaba una cuña de la panza) y
+        # una pata que apenas asoma se mide igual
+        capas = [([elipse(0.2, 0.19)], LILA)]
+        for s in (-1, 1):
+            capas += miembro((s * 0.095, -0.14), (s * 0.105, -0.255), 0.095)
+        trazos, _ = C.strokes(pintar(capas), height=1.0, thin=22)
+        self.assertEqual(len(trazos), 2, [(t['length'], t['iou']) for t in trazos])
+        for t in trazos:
+            self.assertGreater(t['iou'], 0.9)
+            d = np.subtract(t['end'], t['start'])
+            self.assertLess(abs(d[0]), 0.2 * abs(d[1]))                # derecha hacia abajo
+        v = C._vista(pintar(capas), 22)
+        fila, col = int((0.5 + 0.17) * 512), int(0.5 * 512)              # la panza entre las patas
+        self.assertTrue(v['cuerpo'][fila, col])
+
+    def test_pompon(self):
+        # una parte redonda pegada al cuerpo no es un trazo: se informa como bola (centro y radio). La vista
+        # de costado de examples/menta: pompón de radio 0.075 en (0.18, 0.275) sobre una silueta de 1.12
+        from PIL import Image
+        ruta = os.path.join(os.path.dirname(__file__), '..', 'examples', 'menta', 'lado.png')
+        img = np.asarray(Image.open(ruta).convert('RGBA'), np.float64) / 255
+        trazos, info = C.strokes(img, height=1.12, thin=12)
+        self.assertEqual(len(info['blobs']), 1, info['blobs'])
+        b = info['blobs'][0]
+        self.assertAlmostEqual(b['radius'], 0.075, delta=0.004)
+        self.assertAlmostEqual(b['center'][1], 0.275, delta=0.006)
+        self.assertGreater(b['iou'], 0.85)
+        self.assertFalse(any(abs(t['start'][0] - 0.19) < 0.05 and abs(t['start'][1] - 0.27) < 0.05 for t in trazos))
+
 if __name__ == '__main__':
     unittest.main()

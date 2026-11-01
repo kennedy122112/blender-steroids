@@ -285,7 +285,39 @@ with open(ruta('fantasma.json'), 'w', encoding='utf-8') as f:
 r = cli('build', '--file', ruta('fantasma.blend'), '--spec', ruta('fantasma.json'))
 check('un error de build dice de qué objeto es', not r.get('ok') and '«Fantasma»' in (r.get('error') or ''), r.get('error'))
 
-# 10. una entrada inválida no estropea el archivo
+# 10. figura de vinilo (Menta): patas cortas bajo un cuerpo redondo, partes elegidas por posición (near),
+#     un brazo casi horizontal que toma su profundidad de la otra vista y un pompón detectado como bola
+MENTA = """
+r = {}
+dg = bpy.context.evaluated_depsgraph_get()
+for n in ('BrazoAdelante', 'BrazoSaluda', 'Pompon'):
+    o = bpy.data.objects[n]
+    me = o.evaluated_get(dg).to_mesh()
+    vs = [o.matrix_world @ v.co for v in me.vertices]
+    r[n] = [round(min(v.x for v in vs), 4), round(max(v.x for v in vs), 4), round(min(v.y for v in vs), 4),
+            round(max(v.y for v in vs), 4), round(min(v.z for v in vs), 4), round(max(v.z for v in vs), 4)]
+    o.evaluated_get(dg).to_mesh_clear()
+result = r
+"""
+r = cli('build', '--file', ruta('menta.blend'), '--spec', os.path.join(REPO, 'examples', 'menta.json'))
+check('build figura de vinilo sin avisos', r.get('ok') and not r.get('warnings'), r.get('error') or r.get('warnings'))
+o = r.get('outlines') or {}
+bolas = (o.get('Pompon') or {}).get('blobs', [])
+check('vinilo: el pompón sale como bola', len(bolas) == 1 and abs(bolas[0]['radius'] - 0.0166) < 0.001, bolas)
+patas = [t for t in (o.get('Patas') or {}).get('strokes', []) if t['index'] in (o.get('Patas') or {}).get('picked', [])]
+check('vinilo: patas cortas medidas y con profundidad', len(patas) == 2 and all(t['iou'] > 0.9 and t.get('depthFrom') is not None
+                                                                              for t in patas), patas)
+m1 = cli('exec', '--file', ruta('menta.blend'), '--script', script('menta.py', MENTA)).get('result') or {}
+# el brazo estirado llega adelante hasta donde lo dibuja la vista de costado (-0.345 del alto 1.12 → -0.077 m)
+check('vinilo: el brazo horizontal llega a su punta de costado', abs(m1.get('BrazoAdelante', [0] * 6)[2] + 0.077) < 0.004, m1)
+check('vinilo: near elige el brazo que saluda (a la derecha)', m1.get('BrazoSaluda', [0] * 6)[1] > 0.07, m1)
+r = cli('compare', '--file', ruta('menta.blend'), '--reference', os.path.join(REPO, 'examples', 'menta', 'frente.png'),
+        '--view', 'front', '--reference', os.path.join(REPO, 'examples', 'menta', 'lado.png'), '--view', 'right',
+        '--ortho', '--engine', 'workbench', '--frame', '1', '--path', ruta('menta_cmp.png'))
+ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
+check('vinilo: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
+
+# 11. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],
