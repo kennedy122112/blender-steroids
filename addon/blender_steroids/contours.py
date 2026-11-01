@@ -889,10 +889,31 @@ def _quitar_colores(rgba, f, exclude, tol=0.1):
     return f * (1 - quitar)
 
 
+_VISTAS = {}
+
+
 def _vista(rgba, thin=10, threshold=None, exclude=None, exclude_tol=0.1):
     """Lo común a una vista: cobertura, cuerpo y partes finas, y el marco de la vista (en píxeles): abajo
     de toda la silueta (z = 0), su alto (el `height` del spec) y el centro del cuerpo (x = 0). Lo de los
-    colores `exclude` no cuenta como figura, pero el marco es el de la silueta entera (con ello)."""
+    colores `exclude` no cuenta como figura, pero el marco es el de la silueta entera (con ello).
+    Varias piezas salen de la misma vista: se calcula una vez (por el contenido de la imagen y los
+    parámetros) y se devuelve de solo lectura."""
+    import hashlib
+    rgba = np.asarray(rgba)
+    llave = (hashlib.blake2b(np.ascontiguousarray(rgba).tobytes(), digest_size=16).hexdigest(), rgba.shape,
+             float(thin), threshold, tuple([exclude] if isinstance(exclude, str) else exclude or ()), float(exclude_tol))
+    if llave not in _VISTAS:
+        if len(_VISTAS) >= 8:
+            _VISTAS.pop(next(iter(_VISTAS)))
+        v = _calcular_vista(rgba, thin, threshold, exclude, exclude_tol)
+        for a in v.values():
+            if isinstance(a, np.ndarray):
+                a.flags.writeable = False
+        _VISTAS[llave] = v
+    return _VISTAS[llave]
+
+
+def _calcular_vista(rgba, thin, threshold, exclude, exclude_tol):
     f = coverage(rgba, threshold)
     lazos = trace(f)
     if not lazos:

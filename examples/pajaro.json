@@ -48,13 +48,15 @@
    "roughness": 0.8
   }
  ],
+ "sheet": {
+  "front": "pajaro/perfil.png",
+  "side": "pajaro/frente.png",
+  "height": 0.12
+ },
  "objects": [
   {
    "name": "Cuerpo",
    "type": "views",
-   "front": "pajaro/perfil.png",
-   "side": "pajaro/frente.png",
-   "height": 0.12,
    "segments": 64,
    "material": "Pluma",
    "smooth": true
@@ -92,8 +94,6 @@
   {
    "name": "Rama",
    "type": "stroke",
-   "image": "pajaro/perfil.png",
-   "height": 0.12,
    "pick": [
     0
    ],
@@ -103,8 +103,6 @@
   {
    "name": "Cola",
    "type": "stroke",
-   "image": "pajaro/perfil.png",
-   "height": 0.12,
    "pick": [
     1
    ],
@@ -116,8 +114,6 @@
   {
    "name": "Pico",
    "type": "stroke",
-   "image": "pajaro/perfil.png",
-   "height": 0.12,
    "pick": [
     2
    ],
@@ -127,24 +123,15 @@
   {
    "name": "Patas",
    "type": "stroke",
-   "image": "pajaro/frente.png",
    "view": "side",
-   "height": 0.12,
    "color": "#ee8c28",
-   "location": [
-    0.0052,
-    0,
-    0
-   ],
    "material": "Naranja",
    "smooth": true
   },
   {
    "name": "AlaI",
    "type": "outline",
-   "image": "pajaro/perfil.png",
    "inView": true,
-   "height": 0.12,
    "color": "#1e6e7a",
    "pick": [
     0
@@ -163,9 +150,7 @@
   {
    "name": "AlaD",
    "type": "outline",
-   "image": "pajaro/perfil.png",
    "inView": true,
-   "height": 0.12,
    "color": "#1e6e7a",
    "pick": [
     0
@@ -189,10 +174,8 @@
   {
    "name": "Panza",
    "type": "outline",
-   "image": "pajaro/frente.png",
    "inView": true,
    "view": "side",
-   "height": 0.12,
    "color": "#eee2c4",
    "plane": "XY",
    "thickness": 0.001,
@@ -207,10 +190,8 @@
   {
    "name": "Ojos",
    "type": "outline",
-   "image": "pajaro/frente.png",
    "inView": true,
    "view": "side",
-   "height": 0.12,
    "color": "#19191e",
    "plane": "XY",
    "thickness": 0.001,

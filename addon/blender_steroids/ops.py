@@ -257,7 +257,65 @@ PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cyl
 
 # build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
 # lathe con imagen, y su fuente para guardarla en el objeto
-_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': [], 'viewAt': {}}
+_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': [], 'viewAt': {}, 'pixels': {}}
+_CLAVES = set()
+
+
+def _claves_conocidas():
+    """Las claves que el código lee de un spec (`x.get('clave')`, `x['clave']`), sacadas de este mismo
+    archivo: así no hay una lista que mantener aparte. Una clave que no está es casi siempre un error de
+    tipeo que se ignoraría en silencio."""
+    import re
+    if not _CLAVES:
+        with open(__file__, encoding='utf-8') as f:
+            src = f.read()
+        _CLAVES.update(re.findall(r"\.get\('([A-Za-z][A-Za-z0-9_]*)'", src))
+        _CLAVES.update(re.findall(r"\['([A-Za-z][A-Za-z0-9_]*)'\]", src))
+        _CLAVES.update(GEOM_KEYS)
+    return _CLAVES
+
+
+def _claves_raras(d, donde, warnings):
+    """Avisa de las claves de `d` que el código no lee, con la más parecida que sí lee."""
+    import difflib
+    conocidas = _claves_conocidas()
+    for k in d:
+        if k.startswith('_') or k in conocidas:
+            continue
+        cerca = difflib.get_close_matches(k, conocidas, 1, 0.75)
+        warnings.append('%s: «%s» no es una clave que se use%s; se ignora'
+                        % (donde, k, ' (¿%s?)' % cerca[0] if cerca else ''))
+
+
+# lo que una pieza toma de la hoja de vistas si no lo dice ella: todas las piezas de una misma hoja
+# tienen que medirse con el mismo marco (alto, ancho de parte fina, lo que no es figura) para encajar
+_HOJA_COMUNES = ('height', 'thin', 'threshold', 'exclude', 'excludeTolerance')
+
+
+def _con_hoja(os_, hoja):
+    """El objeto completado con la hoja de vistas del spec (`sheet`: {"front", "side", "height", "thin",
+    "threshold", "exclude", "excludeTolerance"}): `views` toma las dos imágenes; `stroke` y `outline`
+    con `inView`, la imagen de su `view` (y `stroke`, la otra vista para su profundidad); y todas, lo
+    común que no digan. Lo que el objeto dice manda."""
+    t = str(os_.get('type', '')).lower()
+    if not hoja or not (t in ('views', 'stroke') or (t == 'outline' and os_.get('inView'))):
+        return os_
+    o = dict(os_)
+    for k in _HOJA_COMUNES:
+        if k in hoja and k not in o:
+            o[k] = hoja[k]
+    if t == 'views':
+        for k in ('front', 'side'):
+            if k not in o and hoja.get(k):
+                o[k] = hoja[k]
+        return o
+    vista = str(o.get('view', 'front')).lower()
+    otra = 'side' if vista == 'front' else 'front'
+    if 'image' not in o and hoja.get(vista):
+        o['image'] = hoja[vista]
+    if t == 'stroke' and otra not in o and hoja.get(otra) and o.get('image') == hoja.get(vista):
+        o[otra] = hoja[otra]
+    return o
 
 
 def _fit(bm, target):
@@ -779,10 +837,16 @@ def _membrane(bm, o):
 def _image_px(o, clave='image'):
     """Imagen de outline/lathe/views/stroke (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
     ruta = _path(o[clave], _BUILD['baseDir'])
-    px = _load_pixels(ruta)
-    if px.shape[0] > 1024:
-        px = _load_pixels(ruta, 1024)
-    return px[::-1], ruta
+    # varias piezas salen de la misma hoja: se lee una vez por build (de solo lectura: nadie la toca)
+    llave = (ruta, os.path.getmtime(ruta))
+    if llave not in _BUILD['pixels']:
+        px = _load_pixels(ruta)
+        if px.shape[0] > 1024:
+            px = _load_pixels(ruta, 1024)
+        px = px[::-1]
+        px.flags.writeable = False
+        _BUILD['pixels'][llave] = px
+    return _BUILD['pixels'][llave], ruta
 
 
 def _public(info):
@@ -1848,6 +1912,10 @@ def op_build(spec):
     _BUILD['baseDir'] = base_dir
     _BUILD['outlines'] = {}
     _BUILD['viewAt'] = {}
+    _BUILD['pixels'] = {}
+    _claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', warnings)
+    for os_ in spec.get('objects', []):
+        _claves_raras(os_, '«%s»' % os_.get('name', '?'), warnings)
     _BUILD['sources'] = {}
     _BUILD['motions'] = []
 
@@ -1878,6 +1946,7 @@ def op_build(spec):
     # 1ª pasada: crear/actualizar cada objeto con su geometría, transformación y material
     objs = []
     for os_ in spec.get('objects', []):
+        os_ = _con_hoja(os_, spec.get('sheet'))
         name = os_['name']
         o = bpy.data.objects.get(name)
         t = os_.get('type', '').lower()
