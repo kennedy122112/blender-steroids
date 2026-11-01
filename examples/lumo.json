@@ -96,7 +96,6 @@
    "image": "lumo/frente.png",
    "height": 0.3,
    "thin": 12,
-   "pick": 3,
    "location": [
     0,
     -0.01,
@@ -105,7 +104,11 @@
    "material": "Lila",
    "smooth": true,
    "parent": "HombroI",
-   "side": "lumo/lado.png"
+   "side": "lumo/lado.png",
+   "near": [
+    0.094,
+    0.086
+   ]
   },
   {
    "name": "BrazoD",
@@ -113,7 +116,6 @@
    "image": "lumo/frente.png",
    "height": 0.3,
    "thin": 12,
-   "pick": 2,
    "location": [
     0,
     -0.01,
@@ -122,7 +124,11 @@
    "material": "Lila",
    "smooth": true,
    "parent": "HombroD",
-   "side": "lumo/lado.png"
+   "side": "lumo/lado.png",
+   "near": [
+    -0.094,
+    0.086
+   ]
   },
   {
    "name": "Patas",
@@ -130,13 +136,19 @@
    "image": "lumo/frente.png",
    "height": 0.3,
    "thin": 12,
-   "pick": [
-    4,
-    5
-   ],
    "material": "Lila",
    "smooth": true,
-   "side": "lumo/lado.png"
+   "side": "lumo/lado.png",
+   "near": [
+    [
+     -0.033,
+     0.005
+    ],
+    [
+     0.033,
+     0.005
+    ]
+   ]
   },
   {
    "name": "Orejas",

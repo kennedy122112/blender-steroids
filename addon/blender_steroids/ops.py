@@ -248,7 +248,7 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
              'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance', 'front', 'top',
-             'thin', 'view', 'pick', 'inView')
+             'thin', 'view', 'pick', 'inView', 'blobs', 'near')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
@@ -442,6 +442,18 @@ def _profundidad(t, otros):
     grueso es ahí (la mediana de sus radios sobre la de t). None si ninguna calza."""
     import numpy as np
     z = np.array(t['points'])[:, 1]
+
+    def puntas(tr):
+        """Altura de la punta pegada al cuerpo y de la libre (o la más baja y la más alta)."""
+        zz = np.array(tr['points'])[:, 1]
+        if tr['attached'] == ['start']:
+            return zz[0], zz[-1]
+        if tr['attached'] == ['end']:
+            return zz[-1], zz[0]
+        return zz.min(), zz.max()
+
+    def largo(tr):
+        return float(np.linalg.norm(np.diff(np.array(tr['points']), axis=0), axis=1).sum())
     mejor, solape_max = None, 0.6
     for j, u in enumerate(otros):
         q = np.array(u['points'])
@@ -449,6 +461,10 @@ def _profundidad(t, otros):
         dz = np.diff(zq)
         if len(dz) < 2 or max((dz > 0).mean(), (dz < 0).mean()) < 0.9:
             continue                                        # vuelve sobre sí misma: no se lee por altura
+        # la misma parte se pega al cuerpo y termina a las mismas alturas en las dos vistas (una cola y
+        # un brazo pueden solaparse en altura y no ser la misma cosa)
+        if max(abs(a_ - b_) for a_, b_ in zip(puntas(t), puntas(u))) > 0.3 * max(largo(t), largo(u)):
+            continue
         solape = min(z.max(), zq.max()) - max(z.min(), zq.min())
         solape /= max(z.max() - z.min(), zq.max() - zq.min(), 1e-9)
         if solape > solape_max:
@@ -461,7 +477,45 @@ def _profundidad(t, otros):
     rq, rt = np.array(u['radii']), np.array(t['radii'])
     dentro = (z >= q[:, 1].min()) & (z <= q[:, 1].max())
     ratio = float(np.median(rq)) / max(float(np.median(rt[dentro] if dentro.any() else rt)), 1e-9)
-    return {'indice': mejor, 'ratio': ratio, 'centro': np.interp(z, q[orden, 1], q[orden, 0]).tolist()}
+    centro = np.interp(z, q[orden, 1], q[orden, 0])
+
+    def fraccion(tr):
+        """Fracción del largo de cada punto, desde la punta pegada al cuerpo."""
+        pp = np.array(tr['points'])
+        s_ = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pp, axis=0), axis=1))])
+        s_ = s_ / max(s_[-1], 1e-12)
+        return 1 - s_ if tr['attached'] == ['end'] else s_
+    # una parte casi horizontal (un brazo estirado hacia adelante) casi no cambia de altura: por altura,
+    # un poco de diferencia entre las vistas lleva a otro punto del brazo. Se empareja por la fracción del
+    # largo desde donde se pega al cuerpo
+    pt = np.array(t['points'])
+    largo_t = float(np.linalg.norm(np.diff(pt, axis=0), axis=1).sum())
+    if np.ptp(z) < 0.5 * largo_t and len(t['attached']) == 1 and len(u['attached']) == 1:
+        su = fraccion(u)
+        o_ = np.argsort(su)
+        centro = np.interp(fraccion(t), su[o_], q[o_, 0])
+    return {'indice': mejor, 'ratio': ratio, 'centro': centro.tolist()}
+
+
+def _stroke_bolas(bm, o, name, info, ruta):
+    """stroke con `blobs: true`: las partes redondas de la vista (un pompón, un botón, una nariz de bola)
+    como esferas, con el centro y el radio del círculo que sigue su borde."""
+    bolas = info.get('blobs') or []
+    if not bolas:
+        raise ValueError('stroke: no hay partes redondas (blobs) en la imagen; mira contour -Strokes')
+    pick = o.get('pick')
+    idx = list(range(len(bolas))) if pick is None else [int(i) for i in (pick if isinstance(pick, list) else [pick])]
+    if any(not 0 <= i < len(bolas) for i in idx):
+        raise ValueError('pick fuera de rango: hay %d bolas (0..%d)' % (len(bolas), len(bolas) - 1))
+    de_lado = str(o.get('view', 'front')).lower() == 'side'
+    for i in idx:
+        b = bolas[i]
+        x, z = b['center']
+        geo = bmesh.ops.create_uvsphere(bm, u_segments=int(o.get('segments', 32)), v_segments=16, radius=b['radius'])
+        bmesh.ops.translate(bm, vec=Vector((0, x, z) if de_lado else (x, 0, z)), verts=geo['verts'])
+    _record(name, o, {'blobs': [dict(b, index=i) for i, b in enumerate(bolas)], 'picked': idx,
+                      'thinPercent': info['thinPercent'], 'targetMet': all(bolas[i]['iou'] >= 0.8 for i in idx),
+                      'tolerancePercent': None, 'elapsedMs': info['elapsedMs']}, ruta)
 
 
 def _stroke(bm, o, name):
@@ -474,12 +528,15 @@ def _stroke(bm, o, name):
     (`side` si view es front, `front` si es side) la profundidad sale de ella: cada trazo toma de la
     parte que ocupa las mismas alturas en la otra vista su posición (una oreja que se inclina hacia
     atrás, una pata que va hacia adelante) y su grosor (una oreja plana), en vez de quedar en el plano
-    de la vista y redondo."""
+    de la vista y redondo. `near` [[x, z], ...] elige por posición (el trazo que pasa más cerca de cada
+    punto); `blobs: true` hace esferas con las partes redondas (un pompón) en vez de tubos."""
     from . import contours
     px, ruta = _image_px(o)
     medir = dict(height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)), threshold=o.get('threshold'),
                  color=o.get('color'), color_tol=float(o.get('colorTolerance', 0.15)))
     trazos, info = contours.strokes(px, **medir)
+    if o.get('blobs'):
+        return _stroke_bolas(bm, o, name, info, ruta)
     if not trazos:
         raise ValueError('stroke: no hay partes finas en la imagen (sube thin, ahora %s %% del alto, o revisa '
                          'color)' % o.get('thin', 10))
@@ -487,6 +544,15 @@ def _stroke(bm, o, name):
     idx = list(range(len(trazos))) if pick is None else [int(i) for i in (pick if isinstance(pick, list) else [pick])]
     if any(not 0 <= i < len(trazos) for i in idx):
         raise ValueError('pick fuera de rango: hay %d trazos (0..%d)' % (len(trazos), len(trazos) - 1))
+    if o.get('near'):
+        # por posición: para cada punto [x, z] (en el marco de la vista, como start/end), el trazo que pasa
+        # más cerca. No depende del orden por largo, que cambia entre partes de casi el mismo largo
+        cerca = o['near'] if isinstance(o['near'][0], (list, tuple)) else [o['near']]
+
+        def distancia(t, c):
+            pp = [(x - c[0]) ** 2 + (z - c[1]) ** 2 for x, z in t['points']]
+            return min(pp)
+        idx = [min(range(len(trazos)), key=lambda i: distancia(trazos[i], c)) for c in cerca]
     lado = str(o.get('view', 'front')).lower()
     if lado not in ('front', 'side'):
         raise ValueError('view debe ser front o side')
@@ -3095,7 +3161,7 @@ def _contour_strokes(args):
     nombres = ['amarillo', 'magenta', 'verde', 'naranja', 'violeta', 'blanco']
     res = {'strokes': [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i,
                             previewColor=nombres[i % len(nombres)]) for i, t in enumerate(trazos)],
-           'thinPercent': info['thinPercent'], 'elapsedMs': info['elapsedMs'],
+           'blobs': info.get('blobs', []), 'thinPercent': info['thinPercent'], 'elapsedMs': info['elapsedMs'],
            'image': {'path': ruta, 'size': [int(px.shape[1]), int(px.shape[0])]}}
     if args.get('preview'):
         img = px.copy()
@@ -3113,6 +3179,10 @@ def _contour_strokes(args):
             nrm = np.column_stack([-tg[:, 1], tg[:, 0]]) * (np.array(t['radii']) / fr['k'])[:, None]
             _draw_polyline(img, q + nrm, col, False)
             _draw_polyline(img, q - nrm, col, False)
+        for b in info.get('blobs', []):                    # las bolas, en blanco
+            t = np.linspace(0, 2 * np.pi, 64)
+            c = np.array([b['center'][0] / fr['k'] + fr['x0'], fr['abajo'] - b['center'][1] / fr['k']])
+            _draw_polyline(img, c + np.column_stack([np.cos(t), np.sin(t)]) * b['radius'] / fr['k'], (1, 1, 1), True, 2)
         out = os.path.abspath(args['preview'])
         os.makedirs(os.path.dirname(out), exist_ok=True)
         im = bpy.data.images.new('bs_contour', img.shape[1], img.shape[0], alpha=False)
