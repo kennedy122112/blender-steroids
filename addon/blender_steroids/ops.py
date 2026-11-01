@@ -248,7 +248,7 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
              'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance', 'front', 'top',
-             'thin', 'view', 'pick')
+             'thin', 'view', 'pick', 'inView')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
@@ -256,7 +256,7 @@ PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cyl
 
 # build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
 # lathe con imagen, y su fuente para guardarla en el objeto
-_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': []}
+_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': [], 'viewAt': {}}
 
 
 def _fit(bm, target):
@@ -639,10 +639,18 @@ def _outline_loops(o):
     else:
         raise ValueError('outline necesita image (una silueta) o points')
     size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
+    escala = vista = None
+    if o.get('inView') and o.get('image'):
+        # en el marco de la vista, como views y stroke: `height` es el alto de la silueta entera
+        vista = contours._vista(fuente, float(o.get('thin', 10)), o.get('threshold'))
+        escala = float(o.get('height', 1.0)) / vista['alto']
     regs, info = contours.outline(fuente, size=size, axis=axis, tolerance=float(o.get('tolerance', 0.25)),
                                   method=o.get('method', 'auto'), threshold=o.get('threshold'),
                                   color=o.get('color') if o.get('image') else None,
-                                  color_tol=float(o.get('colorTolerance', 0.15)))
+                                  color_tol=float(o.get('colorTolerance', 0.15)), pick=o.get('pick'), scale=escala)
+    if vista is not None:
+        cx, cy = info['_frame']['center']                  # en píxeles, y hacia arriba (= -fila)
+        info['at'] = [round((cx - vista['x0']) * escala, 5), round((vista['abajo'] + cy) * escala, 5)]
     return regs, info, ruta
 
 
@@ -657,6 +665,8 @@ def _outline(bm, o, name):
     el resultado de build (`outlines`) y la fuente en la propiedad bs_source del objeto."""
     regs, info, ruta = _outline_loops(o)
     _record(name, o, info, ruta)
+    if 'at' in info:
+        _BUILD['viewAt'][name] = info['at']
     xz = str(o.get('plane', 'XZ')).upper() == 'XZ'
     for r in regs:
         polis = [[Vector((x, 0.0, y) if xz else (x, y, 0.0)) for x, y in lazo]
@@ -1246,6 +1256,19 @@ def _attach(o, spec, warnings):
             sub = o.modifiers.get('bs_wrap_sub') or o.modifiers.new('bs_wrap_sub', 'SUBSURF')
             sub.subdivision_type, sub.levels, sub.render_levels = 'SIMPLE', 4, 4
             o.modifiers.move(o.modifiers.find('bs_wrap_sub'), 0)
+        if a.get('wrap') == 'bake' and o.type == 'MESH':
+            # la forma curvada queda en la malla y se quitan los modificadores: así la pieza se puede
+            # animar (un ala que aletea desde el hombro); con el modificador vivo se volvería a pegar al
+            # cuerpo en cada cuadro. Toma la pose del cuadro actual.
+            bpy.context.view_layer.update()
+            me = bpy.data.meshes.new_from_object(o.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+            for n in ('bs_wrap', 'bs_wrap_sub'):
+                if o.modifiers.get(n):
+                    o.modifiers.remove(o.modifiers[n])
+            viejo, o.data = o.data, me
+            me.name = viejo.name
+            if viejo.users == 0:
+                bpy.data.meshes.remove(viejo)
 
 
 def _on_surface(o, spec, warnings):
@@ -1587,6 +1610,7 @@ def op_build(spec):
     base_dir = spec.get('_baseDir')
     _BUILD['baseDir'] = base_dir
     _BUILD['outlines'] = {}
+    _BUILD['viewAt'] = {}
     _BUILD['sources'] = {}
     _BUILD['motions'] = []
 
@@ -1654,6 +1678,14 @@ def op_build(spec):
             _move_to(o, _collection(os_.get('collection')))
         _apply_data(o, os_, warnings)
         _apply_transform(o, os_)
+        if t == 'outline' and os_.get('inView'):
+            # la pieza va donde está en la vista (su centro), sumado a `location` (la del cuerpo)
+            if name in _BUILD['viewAt']:
+                o['bs_view_at'] = _BUILD['viewAt'][name]
+            if o.get('bs_view_at'):
+                x, z = o['bs_view_at']
+                o.location = Vector(vec3(os_.get('location', (0, 0, 0)))) + Vector(
+                    (0, x, z) if str(os_.get('view', 'front')).lower() == 'side' else (x, 0, z))
         if o.type == 'CURVE' and t == 'outline' and 'rotation' not in os_ \
                 and str(os_.get('plane', 'XZ')).upper() == 'XZ':
             o.rotation_euler = (math.pi / 2, 0, 0)          # la curva 2D vive en XY: de pie, de frente a -Y

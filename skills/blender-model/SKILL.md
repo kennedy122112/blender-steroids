@@ -121,7 +121,7 @@ Todo es opcional salvo `name` en cada objeto. Ejemplo completo: `examples/mesa-c
 | `stroke` | Tubos desde las partes finas de una imagen (asas, picos, alambres, antenas, ramas, patas): `image`, `view` (front/side), `height`, `pick` [índices], `color`, `flat` (aplana de canto), `segments`. Ver «Volumen desde dos vistas» |
 | `blobby` | `balls: [[x,y,z,radio]…]` o `[{"at": [x,y,z], "radius": r, "size": [sx,sy,sz]}]`: bolas que se funden en una sola malla suave (cuerpos orgánicos, panzas, patas, nubes); `resolution` (0.02), `threshold` (0.6). Si dos bolas no se tocan, quedan separadas: agrega bolas intermedias |
 | `membrane` | Alas de murciélago o dragón, aletas, velas, abanicos: `root` (donde nace), `tip` (punta del hueso principal), `fingers` (puntas del borde, en orden), `scallop` (festón entre puntas, 0.18; 0 = recto), `bend` (curva hacia atrás como vela), `bones` (radio de los huesos; 0 = sin huesos), `thickness`. En coordenadas del mundo con `location` en 0; para el par, `modifiers: [{"type": "mirror", "axis": "X"}]` |
-| `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla. Ver «Siluetas» |
+| `outline` | Silueta de una imagen (`image`: figura sobre fondo liso o PNG con transparencia; `threshold` 0-1 si el fondo no se separa solo) o de puntos (`points: [[x, y]…]` en metros y `holes: [[[x, y]…]…]`), extruida `thickness` (0.02; 0 = solo la cara). `width` o `height` en metros; `tolerance` % de la diagonal (0.25); `method` auto/fourier/polygon; `plane` XZ (de pie, de frente a -Y) o XY (en el piso); `output: "curve"` da una curva editable en vez de malla; `color` toma una parte por su color, `pick` elige regiones, `inView` la deja en su lugar de la vista. Ver «Siluetas» |
 | `decal` | `size`: número o `[ancho, alto]`. Pintura plana (ojos, mejillas, manchas, logos, parches) que se pega con `attach` a la superficie y sigue su curvatura |
 | `mesh` | `vertices: [[x,y,z]…]`, `faces: [[i,j,k,…]…]`, `edges` (formas a medida que no salen de lo anterior). Las caras se orientan solas hacia afuera. Con vértices en coordenadas del mundo, pon `location: [0,0,0]` |
 | `text` | `text`, `size`, `extrude`, `bevelDepth`, `align` (left/center/right), `alignY` |
@@ -178,7 +178,15 @@ El resultado de `build` trae `outlines` con lo medido por contorno: `method`, `o
   `color: "#rrggbb"` toma lo que es de ese color en vez de separar la figura del fondo, con borde
   subpíxel; `colorTolerance` (0.15) si el tono varía. Pide el hex al mirar la imagen o a `contour`.
   Para pegarla a una superficie curva: plane XY + `attach` con `align` y `wrap` (funciona aunque la
-  pieza cuelgue de un padre animado).
+  pieza cuelgue de un padre animado). Lo que se aparta del fondo nunca cuenta como ese color, aunque el
+  fondo quede dentro de la tolerancia (una panza crema sobre un fondo gris claro).
+- **Varias partes del mismo color** (un ala y la cola, los dos ojos): `pick: [i]` elige regiones, de la
+  de más área a la de menos (sin `pick`, todas en una pieza: los dos ojos juntos).
+- **En su lugar de la vista** (`inView: true`, con `height` = alto de la silueta entera, como `views` y
+  `stroke`): la pieza sale a la escala de la vista y queda donde está en el dibujo (su centro, sumado a
+  `location`; `view: "side"` si la imagen es la vista derecha). `outlines` trae ese centro en `at`. Con
+  `attach` (y sin `at`) se pega en ese lugar del cuerpo: un ala desde el perfil con `side: "front"`, los
+  ojos o la panza desde la vista de frente con `side: "right"`.
 
 ### Torno desde una foto (`lathe` con `image`)
 Para objetos **de revolución** (jarrones, botellas, vasos, faroles, peones, columnas, lámparas): en vez
@@ -242,8 +250,19 @@ tubo se mete en él, sin huecos.
 - El resultado trae en `outlines` el `size` del cuerpo, `maxErrorPercent` y `targetMet`, y cada trazo
   con su IoU (aviso si < 0.85). `bs_source` guarda las imágenes con su sha1 y, en `stroke`, los puntos y
   radios de cada trazo. `examples/regadera.json` lo hace con cuerpo, asa, pico y flor.
+- **Partes que se ramifican** (patas sobre una rama, una rama con ramitas, una antena en Y): un trazo por
+  rama. Primero el más largo; cada rama que sale de él trae `parent` (su índice) y se mete en su tubo.
+  Las patas de frente, que se juntan sobre una rama vista de punta, se separan mejor por `color`.
+- **Fondo con degradado y partes claras**: el fondo se mide por fila (un estudio, una ilustración), y una
+  parte clara junto a una oscura (una panza crema) cuenta entera aunque se parezca al fondo.
+- **Una figura completa** (`examples/pajaro.json`, un pájaro sobre una rama): cuerpo y cabeza con `views`;
+  rama, cola, pico y pata con `stroke` desde el perfil; las dos patas con `stroke` + `color` desde el
+  frente; ala, panza y ojos con `outline` + `color` + `inView` + `attach`; alas con `wrap: "bake"` que
+  aletean desde un `empty` por hombro (`motion` oscillate) y cola desde otro en su raíz. Calza 0.983 de
+  perfil y 0.981 de frente. Si una vista muestra una pieza aparte pegada al borde (alas plegadas vistas
+  de frente), el cuerpo la incluye y queda un poco más ancho a esa altura.
 - **No es para** formas con huecos que atraviesan el cuerpo de lado a lado, ni para lo que cambia de
-  sección de forma irregular (un personaje): ahí, primitivas.
+  sección de forma irregular (un personaje con brazos y piernas): ahí, primitivas.
 
 ### Ajuste automático de proporciones (`fit`)
 Cuando el boceto ya tiene las piezas correctas pero las proporciones no terminan de coincidir, no
@@ -294,6 +313,10 @@ Las calcomanías se ignoran en los cruces. Ejecútalo después de cada `build` g
 No calcules a ojo dónde queda la superficie de una pieza curva: deja que blender-cli la encuentre.
 - **`attach`** apoya un objeto en la superficie de otro (con sus modificadores ya aplicados):
   `"attach": { "to": "Cabeza", "side": "front", "at": [0.1, 0, 0.6], "offset": 0.001, "align": true, "spin": 0 }`.
+  Con `wrap: true` además la curva sobre la superficie (un modificador que la sigue pegando); con
+  `wrap: "bake"` la curva una vez y la deja así, sin modificadores, para **animarla**: un ala curvada al
+  cuerpo que aletea desde un `empty` en el hombro (con `wrap: true` el modificador la volvería a pegar
+  al cuerpo en cada cuadro). Toma la pose del cuadro actual.
   Lanza un rayo desde `side` (`front`, `back`, `left`, `right`, `top`, `bottom` o un vector) que pasa por
   `at` (punto aproximado; solo cuentan las dos coordenadas perpendiculares a `side`) y pone el objeto en el
   punto de contacto, separado `offset` y, con `align`, con su eje Z según la normal. Para ojos, botones,

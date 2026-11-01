@@ -435,5 +435,69 @@ class Trazos(unittest.TestCase):
         self.assertEqual(trazos, [])
 
 
+def degradado(n=512, arriba=(0.93, 0.94, 0.95), abajo=(0.82, 0.84, 0.85)):
+    """Fondo con degradado vertical, como un estudio o una ilustración."""
+    t = np.linspace(0, 1, n)[:, None, None]
+    return np.ones((n, n, 3)) * ((1 - t) * np.array(arriba) + t * np.array(abajo))
+
+
+def pintar_sobre(fondo, capas):
+    n = fondo.shape[0]
+    img = fondo.copy()
+    for lazos, color in capas:
+        img = img * (1 - (a := _cobertura(lazos, n))[..., None]) + np.array(color) * a[..., None]
+    return np.dstack([img, np.ones((n, n))])
+
+
+def _cobertura(lazos, n, ss=4):
+    m = C.rasterize([np.asarray(l, float) for l in lazos], (n * ss, n * ss),
+                    (-0.5 + 0.5 / (n * ss), 0.5 - 0.5 / (n * ss)), 1.0 / (n * ss))
+    return m.reshape(n, ss, n, ss).mean(axis=(1, 3))
+
+
+class Pajaro(unittest.TestCase):
+    """Prueba del pájaro: fondo con degradado, panza clara, patas sobre una rama, partes por color."""
+
+    def test_panza_clara_sobre_degradado(self):
+        # la panza crema se parece al fondo y está junto a plumas oscuras: no debe abrir una ranura
+        img = pintar_sobre(degradado(), [([circulo(0.3)], (0.2, 0.62, 0.66)),
+                                         ([circulo(0.18, 0.1, -0.05)], (0.93, 0.88, 0.77))])
+        f = C.coverage(img)
+        dentro = _cobertura([circulo(0.3)], 512) > 0.99
+        self.assertGreater(f[dentro].min(), 0.5)
+        afuera = _cobertura([circulo(0.31)], 512) < 0.01
+        self.assertLess(f[afuera].max(), 0.5)
+
+    def test_rama_con_pata(self):
+        # una T: la rama da un trazo y la pata otro que nace de ella (parent) y se mete en el cuerpo
+        img = pintar([([circulo(0.2, 0, 0.15)], VERDE), ([rect(-0.45, -0.32, 0.45, -0.25)], (0.47, 0.32, 0.2)),
+                      ([rect(-0.012, -0.25, 0.012, -0.03)], (0.93, 0.55, 0.16))])
+        trazos, _ = C.strokes(img, height=1.0)
+        self.assertEqual(len(trazos), 2, [(t['length'], t.get('parent')) for t in trazos])
+        rama, pata = trazos
+        self.assertNotIn('parent', rama)
+        self.assertEqual(pata['parent'], 0)
+        self.assertEqual(sorted(pata['attached']), ['end', 'start'])
+        self.assertGreater(min(rama['iou'], pata['iou']), 0.9)
+        x = np.array(pata['points'])[:, 0]
+        self.assertLess(np.abs(x - x.mean()).max(), 0.004)                # derecha, sin doblarse
+
+    def test_color_no_toma_el_fondo(self):
+        # crema con tolerancia amplia: el fondo gris claro queda dentro del rango, pero no es la figura
+        img = pintar_sobre(degradado(), [([circulo(0.3)], (0.2, 0.62, 0.66)),
+                                         ([circulo(0.12, 0.05, -0.05)], (0.93, 0.88, 0.77))])
+        regs, info = C.outline(img, color='#eee2c4', color_tol=0.2)
+        self.assertEqual(info['regions'], 1)
+        self.assertAlmostEqual(info['size'][0], 1.0)
+
+    def test_pick_y_escala(self):
+        img = pintar([([circulo(0.2, -0.2, 0)], VERDE), ([circulo(0.1, 0.25, 0)], VERDE)])
+        regs, info = C.outline(img, pick=[1], scale=0.01)
+        self.assertEqual(info['regions'], 1)
+        self.assertAlmostEqual(info['size'][0], 0.2 * 512 * 0.01, delta=0.02)    # el chico, a 1 cm por px
+        with self.assertRaises(ValueError):
+            C.outline(img, pick=[2])
+
+
 if __name__ == '__main__':
     unittest.main()

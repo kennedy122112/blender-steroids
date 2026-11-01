@@ -206,7 +206,42 @@ r = cli('compare', '--file', ruta('regadera.blend'), '--reference', os.path.join
 ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
 check('regadera: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
 
-# 8. una entrada inválida no estropea el archivo
+# 8. pájaro: fondo con degradado y panza clara, patas que nacen de la rama (trazo con ramas), ala y ojos
+#    por color en su lugar (inView), alas curvadas al cuerpo que aletean (wrap bake) y vuelve a construir igual
+ALAS = """
+r = {}
+for n in ('AlaI', 'AlaD'):
+    o = bpy.data.objects[n]
+    r[n] = {'mods': [m.type for m in o.modifiers], 'verts': len(o.data.vertices)}
+s = bpy.context.scene
+h = bpy.data.objects['HombroI']
+s.frame_set(1)
+r['rot1'] = round(math.degrees(h.rotation_euler.x), 2)
+s.frame_set(5)
+r['rot5'] = round(math.degrees(h.rotation_euler.x), 2)
+result = r
+"""
+r = cli('build', '--file', ruta('pajaro.blend'), '--spec', os.path.join(REPO, 'examples', 'pajaro.json'))
+check('build pájaro sin avisos', r.get('ok') and not r.get('warnings'), r.get('error') or r.get('warnings'))
+o = r.get('outlines') or {}
+check('pájaro: cuerpo desde dos vistas', (o.get('Cuerpo') or {}).get('targetMet'), o.get('Cuerpo'))
+ramas = (o.get('Rama') or {}).get('strokes', [])
+check('pájaro: la pata nace de la rama', any(t.get('parent') == 0 for t in ramas), ramas)
+check('pájaro: ala y ojos en su lugar de la vista', all('at' in (o.get(n) or {}) for n in ('AlaI', 'Ojos', 'Panza'))
+      and (o.get('Ojos') or {}).get('regions') == 2, {n: o.get(n) for n in ('AlaI', 'Ojos')})
+a1 = (cli('exec', '--file', ruta('pajaro.blend'), '--script', script('alas.py', ALAS)).get('result') or {})
+check('pájaro: alas curvadas sin modificadores y aleteando', a1.get('AlaI', {}).get('mods') == []
+      and a1.get('AlaI', {}).get('verts', 0) > 400 and abs(a1.get('rot1', 9)) < 0.01 and abs(a1.get('rot5', 0)) > 5, a1)
+r = cli('build', '--file', ruta('pajaro.blend'), '--spec', os.path.join(REPO, 'examples', 'pajaro.json'))
+a2 = (cli('exec', '--file', ruta('pajaro.blend'), '--script', script('alas.py', ALAS)).get('result') or {})
+check('pájaro: construir otra vez deja las alas igual', r.get('ok') and a2.get('AlaI') == a1.get('AlaI'), [a1, a2])
+r = cli('compare', '--file', ruta('pajaro.blend'), '--reference', os.path.join(REPO, 'examples', 'pajaro', 'perfil.png'),
+        '--view', 'front', '--reference', os.path.join(REPO, 'examples', 'pajaro', 'frente.png'), '--view', 'right',
+        '--ortho', '--engine', 'workbench', '--frame', '1', '--path', ruta('pajaro_cmp.png'))
+ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
+check('pájaro: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
+
+# 9. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],
