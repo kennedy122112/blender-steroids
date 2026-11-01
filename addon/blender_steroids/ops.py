@@ -248,7 +248,8 @@ GEOM_KEYS = ('type', 'size', 'radius', 'radius2', 'depth', 'segments', 'rings', 
              'balls', 'resolution', 'threshold', 'curve', 'twist', 'thickness', 'onSurface', 'root', 'tip',
              'fingers', 'scallop', 'bend', 'bones', 'image', 'holes', 'width', 'height', 'tolerance', 'method',
              'plane', 'side', 'profileRings', 'output', 'range', 'color', 'colorTolerance', 'front', 'top',
-             'thin', 'view', 'pick', 'inView', 'blobs', 'near')
+             'thin', 'view', 'pick', 'inView', 'blobs', 'near', 'exclude', 'excludeTolerance', 'paint',
+             'pickFront', 'pickSide', 'paintRefine')
 
 PRIMITIVES = {'cube', 'plane', 'grid', 'uv_sphere', 'sphere', 'ico_sphere', 'cylinder', 'cone',
               'torus', 'circle', 'monkey', 'mesh', 'tube', 'lathe', 'superellipsoid', 'blobby', 'decal', 'membrane',
@@ -417,11 +418,16 @@ def _views(bm, o, name):
     fr, ruta_f = _image_px(o, 'front')
     sd, ruta_s = _image_px(o, 'side')
     niveles, info = contours.views_body(fr, sd, float(o.get('height', 1.0)), thin=float(o.get('thin', 10)),
-                                        tolerance=float(o.get('tolerance', 0.25)), rings=int(o.get('rings', 64)),
-                                        threshold=o.get('threshold'))
+                                        tolerance=float(o.get('tolerance', 0.25)),
+                                        rings=int(o.get('rings', 240 if o.get('paint') else 64)),
+                                        threshold=o.get('threshold'), exclude=o.get('exclude'),
+                                        exclude_tol=float(o.get('excludeTolerance', 0.1)), color=o.get('color'),
+                                        color_tol=float(o.get('colorTolerance', 0.15)), pick_front=o.get('pickFront'),
+                                        pick_side=o.get('pickSide'))
     top, ruta_t = (_image_px(o, 'top') if o.get('top') else (None, None))
-    forma = contours.section_shape(int(o.get('segments', 48)), float(o.get('roundness', 2.0)), top,
-                                   o.get('threshold'))
+    # pintado, cada cara es un "píxel" de color: más caras para que el borde del pelo no se escalone
+    forma = contours.section_shape(int(o.get('segments', 192 if o.get('paint') else 48)),
+                                   float(o.get('roundness', 2.0)), top, o.get('threshold'))
     anillos = []
     for z, x0, x1, y0, y1 in niveles:
         cx, a, cy, b = (x0 + x1) / 2, (x1 - x0) / 2, (y0 + y1) / 2, (y1 - y0) / 2
@@ -433,7 +439,82 @@ def _views(bm, o, name):
     if o.get('cap', True):
         bm.faces.new(anillos[0][::-1])
         bm.faces.new(anillos[-1])
+    if o.get('paint'):
+        info['painted'] = _pintar_vistas(bm, o, fr, sd, info['_frames'])
     _record(name, o, info, None, [('front', ruta_f), ('side', ruta_s), ('top', ruta_t)])
+
+
+def _pintar_vistas(bm, o, fr, sd, marcos):
+    """`paint` {"#rrggbb": "Material", ...}: cada cara del cuerpo toma el material del color más cercano
+    de la vista que la mira: las de adelante, del frente; las de los costados, atrás y arriba, del costado
+    (el pelo cubre la nuca y deja la cara). Los materiales quedan en `materials` (el de `material`
+    primero) y cada cara con su índice. Devuelve cuántas caras quedaron de cada material."""
+    import numpy as np
+    from . import contours
+    pinta = o['paint']
+    colores = list(pinta)
+    rgb = np.array([contours.hex_rgb(c) for c in colores])
+    nombres = ([o['material']] if o.get('material') else []) + [n for n in dict.fromkeys(pinta.values())
+                                                                  if n != o.get('material')]
+    o['materials'] = o.get('materials') or nombres
+    indice = {c: o['materials'].index(pinta[c]) if pinta[c] in o['materials'] else 0 for c in colores}
+
+    def de_paleta(px):
+        d = ((rgb - px) ** 2).sum(1)
+        j = int(np.argmin(d))
+        return j, d[j] <= 0.12 ** 2 * 3                    # (cerca de un color de la paleta)
+
+    def muestra(img, marco, u, z):
+        f = marco['f']
+        h, w = f.shape
+        col = u / marco['k'] + marco['x0']
+        fila = marco['abajo'] - z / marco['k']
+        # en el borde de la silueta la cara cae sobre el fondo: se corre hacia el centro del cuerpo
+        paso = -1.0 if col > marco['x0'] else 1.0
+        for _ in range(12):
+            ci, fi = int(round(col)), int(round(fila))
+            if 0 <= ci < w and 0 <= fi < h and f[fi, ci] > 0.5:
+                break
+            col += paso
+        ci, fi = int(np.clip(round(col), 0, w - 1)), int(np.clip(round(fila), 0, h - 1))
+        j, cerca = de_paleta(img[fi, ci, :3])
+        # un detalle de otro color (un ojo, un botón: van aparte) toma el color de la paleta que lo rodea
+        r = 2
+        while not cerca and r <= 40:
+            for dy, dx in ((-r, 0), (r, 0), (0, -r), (0, r), (-r, -r), (-r, r), (r, -r), (r, r)):
+                y_, x_ = fi + dy, ci + dx
+                if 0 <= y_ < h and 0 <= x_ < w and f[y_, x_] > 0.5:
+                    j2, cerca2 = de_paleta(img[y_, x_, :3])
+                    if cerca2:
+                        return j2
+            r += 2
+        return j
+    def pintar(caras):
+        for cara in caras:
+            cara.normal_update()
+            c, n = cara.calc_center_median(), cara.normal
+            if n.y < 0 and abs(n.y) >= abs(n.x) and abs(n.y) >= 0.5 * abs(n.z):
+                j = muestra(fr, marcos['front'], c.x, c.z)
+            else:
+                j = muestra(sd, marcos['side'], c.y, c.z)
+            cara.material_index = indice[colores[j]]
+    pintar(list(bm.faces))
+    # el borde entre dos colores (la línea del pelo) sale en escalera de a una cara: se subdividen solo
+    # las caras del borde, dos veces, y se vuelven a pintar
+    for _ in range(int(o.get('paintRefine', 2))):
+        borde = {f for e in bm.edges if len(e.link_faces) == 2
+                 and e.link_faces[0].material_index != e.link_faces[1].material_index for f in e.link_faces}
+        if not borde:
+            break
+        aristas = list({e for f in borde for e in f.edges})
+        res = bmesh.ops.subdivide_edges(bm, edges=aristas, cuts=1, use_grid_fill=True)
+        nuevas = {f for f in res['geom'] if isinstance(f, bmesh.types.BMFace)}
+        pintar(list(nuevas | {f for f in borde if f.is_valid}))
+    cuenta = {}
+    for cara in bm.faces:
+        nombre = o['materials'][cara.material_index]
+        cuenta[nombre] = cuenta.get(nombre, 0) + 1
+    return cuenta
 
 
 def _profundidad(t, otros):
@@ -533,7 +614,8 @@ def _stroke(bm, o, name):
     from . import contours
     px, ruta = _image_px(o)
     medir = dict(height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)), threshold=o.get('threshold'),
-                 color=o.get('color'), color_tol=float(o.get('colorTolerance', 0.15)))
+                 color=o.get('color'), color_tol=float(o.get('colorTolerance', 0.15)), exclude=o.get('exclude'),
+                 exclude_tol=float(o.get('excludeTolerance', 0.1)))
     trazos, info = contours.strokes(px, **medir)
     if o.get('blobs'):
         return _stroke_bolas(bm, o, name, info, ruta)
@@ -751,7 +833,8 @@ def _outline_loops(o):
     escala = vista = None
     if o.get('inView') and o.get('image'):
         # en el marco de la vista, como views y stroke: `height` es el alto de la silueta entera
-        vista = contours._vista(fuente, float(o.get('thin', 10)), o.get('threshold'))
+        vista = contours._vista(fuente, float(o.get('thin', 10)), o.get('threshold'), o.get('exclude'),
+                                float(o.get('excludeTolerance', 0.1)))
         escala = float(o.get('height', 1.0)) / vista['alto']
     regs, info = contours.outline(fuente, size=size, axis=axis, tolerance=float(o.get('tolerance', 0.25)),
                                   method=o.get('method', 'auto'), threshold=o.get('threshold'),
@@ -3155,7 +3238,10 @@ def _contour_strokes(args):
     from . import contours
     _BUILD['baseDir'] = None
     px, ruta = _image_px(args)
-    trazos, info = contours.strokes(px, height=args.get('height'), thin=float(args.get('thin', 10)),
+    excluir = args.get('exclude')
+    if isinstance(excluir, str):
+        excluir = [c for c in excluir.split(',') if c]
+    trazos, info = contours.strokes(px, height=args.get('height'), thin=float(args.get('thin', 10)), exclude=excluir,
                                     threshold=args.get('threshold'), color=args.get('color'),
                                     color_tol=float(args.get('colorTolerance', 0.15)))
     nombres = ['amarillo', 'magenta', 'verde', 'naranja', 'violeta', 'blanco']

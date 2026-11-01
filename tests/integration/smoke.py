@@ -317,7 +317,50 @@ r = cli('compare', '--file', ruta('menta.blend'), '--reference', os.path.join(RE
 ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
 check('vinilo: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
 
-# 11. una entrada inválida no estropea el archivo
+# 11. figura sobre su base (Nico): la base de otro color fuera de la figura (exclude), botas por color
+#     (views con color y pickFront), y el cuerpo pintado desde las vistas: pelo arriba, atrás y a los
+#     costados de la cara, la cara de piel y el impermeable amarillo
+NICO = """
+import bmesh
+o = bpy.data.objects['Cuerpo']
+bm = bmesh.new()
+bm.from_mesh(o.data)
+mats = [m.name for m in o.data.materials]
+
+def material_en(cond, clave):
+    caras = [f for f in bm.faces if cond(f)]
+    f = max(caras, key=clave)
+    return mats[f.material_index]
+alto = max(v.co.z for v in bm.verts)
+r = {'nuca': material_en(lambda f: abs(f.calc_center_median().x) < 0.004 and f.calc_center_median().z > 0.6 * alto,
+                         lambda f: f.calc_center_median().y),
+     'cara': material_en(lambda f: abs(f.calc_center_median().x) < 0.004 and 0.58 * alto < f.calc_center_median().z < 0.68 * alto,
+                         lambda f: -f.calc_center_median().y),
+     'pecho': material_en(lambda f: abs(f.calc_center_median().x) < 0.004 and 0.3 * alto < f.calc_center_median().z < 0.42 * alto,
+                          lambda f: -f.calc_center_median().y),
+     'mats': mats}
+bm.free()
+result = r
+"""
+r = cli('build', '--file', ruta('nico.blend'), '--spec', os.path.join(REPO, 'examples', 'nico.json'))
+avisos = [w for w in (r.get('warnings') or []) if 'Mangas' not in w]
+check('build figura sobre base (sin otros avisos)', r.get('ok') and not avisos, r.get('error') or avisos)
+o = r.get('outlines') or {}
+pintado = (o.get('Cuerpo') or {}).get('painted') or {}
+check('figura: el cuerpo pintado con los tres materiales', all(pintado.get(n, 0) > 1000 for n in ('Piel', 'Pelo', 'Impermeable')),
+      pintado)
+botas = [(o.get(n) or {}).get('size') for n in ('BotaA', 'BotaB')]
+check('figura: las botas por su color, una en cada lado', all(b and 0.013 < b[0] < 0.018 for b in botas), botas)
+n1 = cli('exec', '--file', ruta('nico.blend'), '--script', script('nico.py', NICO)).get('result') or {}
+check('figura: pelo en la nuca, piel en la cara, impermeable en el pecho',
+      (n1.get('nuca'), n1.get('cara'), n1.get('pecho')) == ('Pelo', 'Piel', 'Impermeable'), n1)
+r = cli('compare', '--file', ruta('nico.blend'), '--reference', os.path.join(REPO, 'examples', 'nico', 'frente.png'),
+        '--view', 'front', '--reference', os.path.join(REPO, 'examples', 'nico', 'lado.png'), '--view', 'right',
+        '--ortho', '--engine', 'workbench', '--path', ruta('nico_cmp.png'))
+ious = [v.get('silhouetteIoU') or 0 for v in r.get('views', [])]
+check('figura: calza con las dos vistas (ortográfica)', len(ious) == 2 and min(ious) > 0.95, r.get('error') or ious)
+
+# 12. una entrada inválida no estropea el archivo
 antes = os.path.getmtime(ruta('pieza.blend'))
 with open(ruta('malo.json'), 'w', encoding='utf-8') as f:
     json.dump({'objects': [{'name': 'Otra', 'type': 'cube'}],
