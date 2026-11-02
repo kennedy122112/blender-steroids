@@ -219,7 +219,8 @@ El formato del spec está en [`skills/blender-model/SKILL.md`](skills/blender-mo
 | `addon/blender_steroids/` | El add-on: `server.py` (puerto local), `ops.py` (todas las operaciones con `bpy`), `contours.py` (contornos, Fourier y polígonos, torno, dos vistas y trazos; solo NumPy), `formato.py` (lo que se lee del spec: colores, claves, hoja de vistas), `mascaras.py` (siluetas e IoU para comparar; solo NumPy), `vistas.py` (emparejar las partes finas de las dos vistas; solo NumPy), `dynamics.py` (oscilar, resorte, péndulo y seguir, con RK4; sin dependencias). Todo menos `server.py` y `ops.py` se prueba sin Blender |
 | `tests/integration/smoke.py` | Prueba con Blender de verdad: ejemplos, curvas horneadas, GLB reabierto, período del péndulo, idempotencia, objetos ajenos, reemplazo malla/curva y archivo intacto ante un error |
 | `.github/workflows/tests.yml` | CI: pruebas unitarias (Python 3.10 y 3.12) y Blender 4.2 sin interfaz con la prueba de integración, en cada PR |
-| `tests/` | Pruebas de contornos y de movimiento: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
+| `tests/` | Pruebas sin Blender de los módulos y de los ejemplos: `python -m unittest discover -s tests` (NumPy; también con el Python de Blender) |
+| `tests/estilo_json.py` | El formato de los specs de `examples/`: `python tests/estilo_json.py examples/*.json` lo aplica (solo cambia espacios y saltos de línea) |
 | `addon/headless.py`, `addon/startup.py` | Modo sin interfaz y arranque del puente en `launch` |
 | `bin/blender_cli.py`, `bin/blender-cli.cmd`, `bin/blender-cli.ps1`, `bin/blender-cli` | El puente del agente y sus lanzadores (Windows, macOS/Linux) |
 | `skills/` | Las cuatro skills (`SKILL.md`; las técnicas largas de `blender-model` en sus `references/`) |

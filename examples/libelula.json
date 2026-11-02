@@ -16,7 +16,6 @@
   ],
   "objects": [
     { "name": "Piso", "type": "plane", "size": 6, "material": "Piso" },
-
     { "name": "Libelula", "type": "empty", "location": [0, 0, 0.6], "size": 0.1 },
     { "name": "Torax", "type": "superellipsoid", "size": [0.11, 0.17, 0.11], "roundness": 0.8,
       "location": [0, 0.2, 0.6], "material": "Cuerpo", "parent": "Libelula", "smooth": true },
@@ -28,11 +27,10 @@
       "parent": "Libelula", "smooth": true },
     { "name": "BisagraAbdomen", "type": "empty", "location": [0, 0.12, 0.6], "size": 0.03, "parent": "Libelula" },
     { "name": "Abdomen", "type": "tube", "curve": [[0, 0.12, 0.6], [0, -0.15, 0.6], [0, -0.42, 0.57]],
-      "radii": [0.03, 0.016], "segments": 16, "location": [0, 0, 0], "material": "Cuerpo",
-      "parent": "BisagraAbdomen", "smooth": true },
+      "radii": [0.03, 0.016], "segments": 16, "location": [0, 0, 0], "material": "Cuerpo", "parent": "BisagraAbdomen",
+      "smooth": true },
     { "name": "Punta", "type": "sphere", "radius": 0.017, "location": [0, -0.425, 0.57], "material": "Anillos",
       "parent": "BisagraAbdomen", "smooth": true },
-
     { "name": "BisagraDA", "type": "empty", "location": [0.045, 0.24, 0.64], "size": 0.03, "parent": "Libelula" },
     { "name": "BisagraDT", "type": "empty", "location": [0.045, 0.15, 0.64], "size": 0.03, "parent": "Libelula" },
     { "name": "BisagraIA", "type": "empty", "location": [-0.045, 0.24, 0.64], "size": 0.03, "parent": "Libelula" },
@@ -45,7 +43,6 @@
       "plane": "XY", "scale": [-1, 1, 1], "location": [-0.27, 0.24, 0.64], "material": "Ala", "parent": "BisagraIA" },
     { "name": "AlaIT", "type": "outline", "image": "libelula/ala.png", "width": 0.42, "thickness": 0.003,
       "plane": "XY", "scale": [-1, 1, 1], "location": [-0.25, 0.15, 0.64], "material": "Ala", "parent": "BisagraIT" },
-
     { "name": "Sol", "type": "light", "light": "sun", "energy": 3, "rotation": [45, 10, 30] },
     { "name": "Relleno", "type": "light", "light": "area", "energy": 60, "size": 2, "location": [-1.2, -1.2, 1.4],
       "lookAt": [0, 0, 0.6] },
@@ -64,7 +61,7 @@
     { "object": "Libelula", "property": "location", "axis": "z",
       "motion": { "kind": "oscillate", "frequency": 1, "amplitude": 0.02 } },
     { "object": "BisagraAbdomen", "property": "rotation", "axis": "x",
-      "motion": { "kind": "follow", "leader": "Libelula", "leaderAxis": "z", "frequency": 2.5,
-                  "dampingRatio": 0.25, "gain": 2.0 } }
+      "motion": { "kind": "follow", "leader": "Libelula", "leaderAxis": "z", "frequency": 2.5, "dampingRatio": 0.25,
+        "gain": 2.0 } }
   ]
 }
