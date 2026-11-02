@@ -3,6 +3,7 @@ Pruebas de lo que se lee de un spec (addon/blender_steroids/formato.py), sin Ble
 vectores, rutas, el aviso de claves mal escritas y la hoja de vistas.
 Ejecutar: python -m unittest discover -s tests
 """
+import json
 import os
 import sys
 import tempfile
@@ -79,6 +80,20 @@ class Claves(unittest.TestCase):
         conocidas = F.claves_conocidas()
         self.assertIn('lookAt', conocidas)          # se lee en ops.py
         self.assertIn('inView', conocidas)          # se lee en formato.py (y está en GEOM_KEYS)
+
+    def test_los_ejemplos_no_avisan(self):
+        # todo lo que traen los ejemplos se usa: un aviso aquí es una clave que el detector no ve
+        carpeta = os.path.join(os.path.dirname(__file__), '..', 'examples')
+        for nombre in sorted(os.listdir(carpeta)):
+            if not nombre.endswith('.json'):
+                continue
+            with open(os.path.join(carpeta, nombre), encoding='utf-8') as f:
+                spec = json.load(f)
+            w = []
+            F.claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', w)
+            for o in spec.get('objects', []):
+                F.claves_raras(o, '«%s»' % o.get('name'), w)
+            self.assertEqual(w, [], nombre)
 
 
 class Hoja(unittest.TestCase):
