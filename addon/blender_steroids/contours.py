@@ -14,6 +14,34 @@ import numpy as np
 
 ESQUINA_GRADOS = 45.0        # un vértice del polígono que gira más que esto es una esquina
 FRACCION_ESQUINAS = 0.5      # si más de esta parte del giro total está en esquinas, el lazo es "anguloso"
+IOU_TRAZO = 0.85             # un trazo que calza menos con su parte de la imagen no es una parte fina
+IOU_BOLA = 0.8               # una bola (blobs) que calza menos con su círculo no es redonda
+DESVIO_VISTAS = 2.0          # % del alto: más diferencia de alto entre las dos vistas es otra escala
+ASIMETRIA = 3.0              # % del alto: más diferencia entre las mitades de un torno es un asa o un pico
+
+
+def avisos(nombre, info):
+    """Lo que conviene revisar de una pieza hecha desde una imagen (las medidas que build devuelve en
+    `outlines`): un trazo elegido que calza poco, un contorno que no llegó a la tolerancia, dos vistas
+    que no miden lo mismo de alto o un torno con las mitades distintas."""
+    w = []
+    if 'strokes' in info:
+        for t in info['strokes']:
+            if t['index'] in info['picked'] and t['iou'] < IOU_TRAZO:
+                w.append('«%s»: el trazo %d calza poco con la imagen (IoU %s): ¿es una parte fina? '
+                         'Mira outlines y la vista previa de contour -Strokes' % (nombre, t['index'], t['iou']))
+    elif not info['targetMet']:
+        w.append('«%s»: algún contorno no llegó a la tolerancia de %s %% (mira outlines)'
+                 % (nombre, info['tolerancePercent']))
+    if info.get('viewsMismatchPercent', 0) > DESVIO_VISTAS:
+        w.append('«%s»: el cuerpo no mide lo mismo de alto en las dos vistas (%s %% del alto): '
+                 '¿son del mismo objeto, a la misma escala y con el mismo height?'
+                 % (nombre, info['viewsMismatchPercent']))
+    if info.get('side') == 'both' and info.get('asymmetryPercent', 0) > ASIMETRIA:
+        w.append('«%s»: las dos mitades de la silueta difieren %s %% del alto; si de un lado '
+                 'hay un asa o un pico usa side left/right, o la foto no está de lado'
+                 % (nombre, info['asymmetryPercent']))
+    return w
 
 
 # ----------------------------------------------------------------------------------- imagen -> lazos

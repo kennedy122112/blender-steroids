@@ -696,5 +696,33 @@ class Figura(unittest.TestCase):
         self.assertAlmostEqual(z.min() * k, 0.057, delta=0.008)
 
 
+class Avisos(unittest.TestCase):
+    """Lo que build avisa de una pieza hecha desde una imagen, a partir de sus medidas (`outlines`)."""
+
+    def test_todo_bien_no_avisa(self):
+        self.assertEqual(C.avisos('Jarra', {'targetMet': True, 'tolerancePercent': 0.25, 'side': 'both',
+                                            'asymmetryPercent': 1.0, 'viewsMismatchPercent': 0.5}), [])
+
+    def test_contorno_fuera_de_tolerancia(self):
+        w = C.avisos('Logo', {'targetMet': False, 'tolerancePercent': 0.25})
+        self.assertEqual(len(w), 1)
+        self.assertIn('«Logo»', w[0])
+        self.assertIn('0.25 %', w[0])
+
+    def test_solo_los_trazos_elegidos_que_calzan_poco(self):
+        info = {'strokes': [{'index': 0, 'iou': 0.6}, {'index': 1, 'iou': 0.95}, {'index': 2, 'iou': 0.5}],
+                'picked': [0, 1], 'targetMet': False}
+        w = C.avisos('Asa', info)
+        self.assertEqual(len(w), 1)                          # el 2 calza poco pero no se eligió
+        self.assertIn('trazo 0', w[0])
+
+    def test_vistas_de_distinto_alto_y_torno_asimetrico(self):
+        w = C.avisos('Cuerpo', {'targetMet': True, 'viewsMismatchPercent': C.DESVIO_VISTAS + 1})
+        self.assertIn('dos vistas', w[0])
+        w = C.avisos('Taza', {'targetMet': True, 'side': 'both', 'asymmetryPercent': C.ASIMETRIA + 1})
+        self.assertIn('mitades', w[0])
+        self.assertEqual(C.avisos('Taza', {'targetMet': True, 'side': 'left', 'asymmetryPercent': 20}), [])
+
+
 if __name__ == '__main__':
     unittest.main()

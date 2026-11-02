@@ -191,9 +191,59 @@ def op_scene(args):
 # ----------------------------------------------------------------------------------- geometría
 
 
-# build deja aquí la carpeta del spec (rutas de imágenes de outline), las medidas de cada outline o
-# lathe con imagen, y su fuente para guardarla en el objeto
-_BUILD = {'baseDir': None, 'outlines': {}, 'sources': {}, 'motions': [], 'viewAt': {}, 'pixels': {}}
+# las imágenes de una pieza se leen hasta este alto (en píxeles): más no mejora el contorno
+_ALTO_MAX_IMAGEN = 1024
+
+
+class _Armado:
+    """Lo que junta un build mientras arma las piezas: la carpeta del spec (de ahí se leen las imágenes),
+    las medidas de cada pieza hecha desde una imagen (van a `outlines`), su fuente (bs_source), dónde
+    queda en la vista cada outline con inView, los movimientos horneados y las imágenes ya leídas. Cada
+    build arma uno nuevo; contour usa uno suelto, sin carpeta."""
+
+    def __init__(self, base_dir=None):
+        self.base_dir = base_dir
+        self.contornos = {}
+        self.fuentes = {}
+        self.en_vista = {}
+        self.movimientos = []
+        self._pixeles = {}
+
+    def pixeles(self, o, clave='image'):
+        """Imagen de outline/lathe/views/stroke (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
+        ruta = formato.ruta(o[clave], self.base_dir)
+        # varias piezas salen de la misma hoja: se lee una vez por build (de solo lectura: nadie la toca)
+        llave = (ruta, os.path.getmtime(ruta))
+        if llave not in self._pixeles:
+            px = _load_pixels(ruta)
+            if px.shape[0] > _ALTO_MAX_IMAGEN:
+                px = _load_pixels(ruta, _ALTO_MAX_IMAGEN)
+            px = px[::-1]
+            px.flags.writeable = False
+            self._pixeles[llave] = px
+        return self._pixeles[llave], ruta
+
+    def anotar(self, name, o, info, ruta=None, otras=()):
+        """Guarda las medidas para el resultado de build y la fuente completa para el objeto (bs_source):
+        con qué se generó (parámetros, imagen y su sha1, versión) y qué salió (con los coeficientes de
+        Fourier de cada contorno), para poder reproducirlo o explicarlo después."""
+        import hashlib
+        from .version import VERSION
+        pub = _public(info)
+        self.contornos[name] = pub
+        res = dict(pub)
+        if 'loops' in info:
+            res['loops'] = [dict(l, **({'coefficients': c['_coef']} if '_coef' in c else {}))
+                            for l, c in zip(pub['loops'], info['loops'])]
+        fuente = {'generator': o.get('type'), 'version': VERSION,
+                  'params': {k: o[k] for k in formato.GEOM_KEYS if k in o and k not in ('image', 'profile')
+                             and not (o.get('type') in ('views', 'stroke') and k in ('front', 'side', 'top'))},
+                  'result': res}
+        for clave, r in [('image', ruta)] + list(otras):
+            if r:
+                with open(r, 'rb') as f:
+                    fuente[clave] = {'path': r, 'sha1': hashlib.sha1(f.read()).hexdigest()}
+        self.fuentes[name] = fuente
 
 
 def _fit(bm, target):
@@ -296,7 +346,7 @@ def _tube(bm, o):
                 bm.faces.new((c, ring[j], ring[(j + 1) % seg]))
 
 
-def _lathe(bm, o, name=None):
+def _lathe(bm, o, name, armado):
     """Perfil girado alrededor de Z: `profile` = [[radio, z], ...] de abajo arriba (jarrones, troncos,
     botellas, peones, lámparas). Un radio 0 cierra en un punto. O `image`: la silueta del objeto visto
     de lado, de la que se mide el perfil (`height` o `width` en metros, `tolerance` % del alto, `side`
@@ -304,14 +354,14 @@ def _lathe(bm, o, name=None):
     hacer solo una franja: así cada parte lleva su material); las medidas van a `outlines` de build."""
     if o.get('image'):
         from . import contours
-        px, ruta = _image_px(o)
+        px, ruta = armado.pixeles(o)
         size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
         perfil, info = contours.lathe_profile(px, size=size, axis=axis,
                                               tolerance=float(o.get('tolerance', 0.25)),
                                               side=o.get('side', 'both'), threshold=o.get('threshold'),
                                               rings=int(o.get('profileRings', 64)), z_range=o.get('range'))
         info['profile'] = [[round(float(r), 4), round(float(z), 4)] for r, z in perfil]
-        _record(name, o, info, ruta)
+        armado.anotar(name, o, info, ruta)
         o = dict(o, profile=info['profile'])
     elif not o.get('profile'):
         raise ValueError('lathe necesita profile [[radio, z], ...] o image (la silueta vista de lado)')
@@ -340,7 +390,7 @@ def _lathe(bm, o, name=None):
                 bm.faces.new(ring)
 
 
-def _views(bm, o, name):
+def _views(bm, o, name, armado):
     """Cuerpo desde dos vistas del objeto (`front`: de frente, X a la derecha; `side`: la vista derecha,
     Y a la derecha), sin sus partes finas (asas, picos, alambres: se hacen con `stroke`). En cada altura
     la sección es una elipse (`roundness` 2; más = más cuadrada) o la forma de la vista de arriba (`top`,
@@ -351,8 +401,8 @@ def _views(bm, o, name):
     from . import contours
     if not (o.get('front') and o.get('side')):
         raise ValueError('views necesita front y side: dos imágenes del objeto (de frente y de costado)')
-    fr, ruta_f = _image_px(o, 'front')
-    sd, ruta_s = _image_px(o, 'side')
+    fr, ruta_f = armado.pixeles(o, 'front')
+    sd, ruta_s = armado.pixeles(o, 'side')
     niveles, info = contours.views_body(fr, sd, float(o.get('height', 1.0)), thin=float(o.get('thin', 10)),
                                         tolerance=float(o.get('tolerance', 0.25)),
                                         rings=int(o.get('rings', 240 if o.get('paint') else 64)),
@@ -360,7 +410,7 @@ def _views(bm, o, name):
                                         exclude_tol=float(o.get('excludeTolerance', 0.1)), color=o.get('color'),
                                         color_tol=float(o.get('colorTolerance', 0.15)), pick_front=o.get('pickFront'),
                                         pick_side=o.get('pickSide'))
-    top, ruta_t = (_image_px(o, 'top') if o.get('top') else (None, None))
+    top, ruta_t = (armado.pixeles(o, 'top') if o.get('top') else (None, None))
     # pintado, cada cara es un "píxel" de color: más caras para que el borde del pelo no se escalone
     forma = contours.section_shape(int(o.get('segments', 192 if o.get('paint') else 48)),
                                    float(o.get('roundness', 2.0)), top, o.get('threshold'))
@@ -377,7 +427,7 @@ def _views(bm, o, name):
         bm.faces.new(anillos[-1])
     if o.get('paint'):
         info['painted'] = _pintar_vistas(bm, o, fr, sd, info['_frames'])
-    _record(name, o, info, None, [('front', ruta_f), ('side', ruta_s), ('top', ruta_t)])
+    armado.anotar(name, o, info, None, [('front', ruta_f), ('side', ruta_s), ('top', ruta_t)])
 
 
 def _pintar_vistas(bm, o, fr, sd, marcos):
@@ -453,9 +503,10 @@ def _pintar_vistas(bm, o, fr, sd, marcos):
     return cuenta
 
 
-def _stroke_bolas(bm, o, name, info, ruta):
+def _stroke_bolas(bm, o, name, info, ruta, armado):
     """stroke con `blobs: true`: las partes redondas de la vista (un pompón, un botón, una nariz de bola)
     como esferas, con el centro y el radio del círculo que sigue su borde."""
+    from . import contours
     bolas = info.get('blobs') or []
     if not bolas:
         raise ValueError('stroke: no hay partes redondas (blobs) en la imagen; mira contour -Strokes')
@@ -469,12 +520,12 @@ def _stroke_bolas(bm, o, name, info, ruta):
         x, z = b['center']
         geo = bmesh.ops.create_uvsphere(bm, u_segments=int(o.get('segments', 32)), v_segments=16, radius=b['radius'])
         bmesh.ops.translate(bm, vec=Vector((0, x, z) if de_lado else (x, 0, z)), verts=geo['verts'])
-    _record(name, o, {'blobs': [dict(b, index=i) for i, b in enumerate(bolas)], 'picked': idx,
-                      'thinPercent': info['thinPercent'], 'targetMet': all(bolas[i]['iou'] >= 0.8 for i in idx),
+    armado.anotar(name, o, {'blobs': [dict(b, index=i) for i, b in enumerate(bolas)], 'picked': idx,
+                      'thinPercent': info['thinPercent'], 'targetMet': all(bolas[i]['iou'] >= contours.IOU_BOLA for i in idx),
                       'tolerancePercent': None, 'elapsedMs': info['elapsedMs']}, ruta)
 
 
-def _stroke(bm, o, name):
+def _stroke(bm, o, name, armado):
     """Tubos desde las partes finas de una vista (asas, picos, alambres, antenas, ramas, patas): de la
     imagen (`image`, la vista donde el trazo se ve a lo largo; `view` front o side) se mide el eje de
     cada parte fina y su ancho en cada punto, y se hace un tubo que lo sigue y se mete en el cuerpo
@@ -487,13 +538,13 @@ def _stroke(bm, o, name):
     de la vista y redondo. `near` [[x, z], ...] elige por posición (el trazo que pasa más cerca de cada
     punto); `blobs: true` hace esferas con las partes redondas (un pompón) en vez de tubos."""
     from . import contours
-    px, ruta = _image_px(o)
+    px, ruta = armado.pixeles(o)
     medir = dict(height=float(o.get('height', 1.0)), thin=float(o.get('thin', 10)), threshold=o.get('threshold'),
                  color=o.get('color'), color_tol=float(o.get('colorTolerance', 0.15)), exclude=o.get('exclude'),
                  exclude_tol=float(o.get('excludeTolerance', 0.1)))
     trazos, info = contours.strokes(px, **medir)
     if o.get('blobs'):
-        return _stroke_bolas(bm, o, name, info, ruta)
+        return _stroke_bolas(bm, o, name, info, ruta, armado)
     if not trazos:
         raise ValueError('stroke: no hay partes finas en la imagen (sube thin, ahora %s %% del alto, o revisa '
                          'color)' % o.get('thin', 10))
@@ -517,7 +568,7 @@ def _stroke(bm, o, name):
     otra = 'side' if lado == 'front' else 'front'
     otros, ruta_otra = [], None
     if o.get(otra):
-        px2, ruta_otra = _image_px(o, otra)
+        px2, ruta_otra = armado.pixeles(o, otra)
         otros, _ = contours.strokes(px2, **medir)
     seg = int(o.get('segments', 16))
     resumen = [dict({k: v for k, v in t.items() if k not in ('points', 'radii')}, index=i)
@@ -539,11 +590,11 @@ def _stroke(bm, o, name):
                 v.co[eje] *= flat
         if hondo:
             resumen[i]['depthFrom'] = hondo['indice']
-    _record(name, o, {'strokes': resumen, 'picked': idx, 'thinPercent': info['thinPercent'],
-                      'targetMet': all(trazos[i]['iou'] >= 0.85 for i in idx), 'tolerancePercent': None,
+    armado.anotar(name, o, {'strokes': resumen, 'picked': idx, 'thinPercent': info['thinPercent'],
+                      'targetMet': all(trazos[i]['iou'] >= contours.IOU_TRAZO for i in idx), 'tolerancePercent': None,
                       'elapsedMs': info['elapsedMs']}, ruta, [(otra, ruta_otra)])
-    _BUILD['sources'][name]['result']['strokes'] = [dict(r, points=t['points'], radii=t['radii'])
-                                                    for r, t in zip(resumen, trazos)]
+    armado.fuentes[name]['result']['strokes'] = [dict(r, points=t['points'], radii=t['radii'])
+                                             for r, t in zip(resumen, trazos)]
 
 
 def _superellipsoid(bm, o):
@@ -650,22 +701,6 @@ def _membrane(bm, o):
         for pts, r0, r1 in huesos:
             _tube(bm, {'points': [list(p) for p in pts], 'radii': [r0, r1], 'segments': 12})
 
-
-def _image_px(o, clave='image'):
-    """Imagen de outline/lathe/views/stroke (filas de arriba abajo, hasta 1024 px de alto) y su ruta."""
-    ruta = formato.ruta(o[clave], _BUILD['baseDir'])
-    # varias piezas salen de la misma hoja: se lee una vez por build (de solo lectura: nadie la toca)
-    llave = (ruta, os.path.getmtime(ruta))
-    if llave not in _BUILD['pixels']:
-        px = _load_pixels(ruta)
-        if px.shape[0] > 1024:
-            px = _load_pixels(ruta, 1024)
-        px = px[::-1]
-        px.flags.writeable = False
-        _BUILD['pixels'][llave] = px
-    return _BUILD['pixels'][llave], ruta
-
-
 def _public(info):
     """Medidas para el resultado (sin coeficientes ni marcos internos, que empiezan con _)."""
     def limpio(d):
@@ -676,36 +711,12 @@ def _public(info):
         pub['loops'] = [limpio(l) for l in info['loops']]
     return pub
 
-
-def _record(name, o, info, ruta=None, otras=()):
-    """Guarda las medidas para el resultado de build y la fuente completa para el objeto (bs_source):
-    con qué se generó (parámetros, imagen y su sha1, versión) y qué salió (con los coeficientes de
-    Fourier de cada contorno), para poder reproducirlo o explicarlo después."""
-    import hashlib
-    from .version import VERSION
-    pub = _public(info)
-    _BUILD['outlines'][name] = pub
-    res = dict(pub)
-    if 'loops' in info:
-        res['loops'] = [dict(l, **({'coefficients': c['_coef']} if '_coef' in c else {}))
-                        for l, c in zip(pub['loops'], info['loops'])]
-    fuente = {'generator': o.get('type'), 'version': VERSION,
-              'params': {k: o[k] for k in formato.GEOM_KEYS if k in o and k not in ('image', 'profile')
-                         and not (o.get('type') in ('views', 'stroke') and k in ('front', 'side', 'top'))},
-              'result': res}
-    for clave, r in [('image', ruta)] + list(otras):
-        if r:
-            with open(r, 'rb') as f:
-                fuente[clave] = {'path': r, 'sha1': hashlib.sha1(f.read()).hexdigest()}
-    _BUILD['sources'][name] = fuente
-
-
-def _outline_loops(o):
+def _outline_loops(o, armado):
     """Regiones simplificadas de outline (en metros, plano local XY) y sus medidas."""
     from . import contours
     ruta = None
     if o.get('image'):
-        fuente, ruta = _image_px(o)
+        fuente, ruta = armado.pixeles(o)
     elif o.get('points'):
         fuente = [{'outer': o['points'], 'holes': o.get('holes', [])}]
     else:
@@ -727,7 +738,7 @@ def _outline_loops(o):
     return regs, info, ruta
 
 
-def _outline(bm, o, name):
+def _outline(bm, o, name, armado):
     """Silueta plana o extruida a partir de una imagen (`image`: figura sobre fondo liso, o PNG con
     transparencia) o de puntos (`points` [[x, y], ...] en metros, con `holes` [[[x, y], ...], ...]).
     Cada contorno se simplifica con Fourier (curvas suaves) o como polígono (esquinas vivas) según
@@ -736,10 +747,10 @@ def _outline(bm, o, name):
     (0 = solo la cara); `plane` 'XZ' (de pie, de frente a -Y como la vista front) o 'XY' (en el piso).
     `output: "curve"` da una curva de Blender en vez de malla (_outline_curve). Las medidas quedan en
     el resultado de build (`outlines`) y la fuente en la propiedad bs_source del objeto."""
-    regs, info, ruta = _outline_loops(o)
-    _record(name, o, info, ruta)
+    regs, info, ruta = _outline_loops(o, armado)
+    armado.anotar(name, o, info, ruta)
     if 'at' in info:
-        _BUILD['viewAt'][name] = info['at']
+        armado.en_vista[name] = info['at']
     xz = str(o.get('plane', 'XZ')).upper() == 'XZ'
     for r in regs:
         polis = [[Vector((x, 0.0, y) if xz else (x, y, 0.0)) for x, y in lazo]
@@ -765,12 +776,12 @@ def _outline(bm, o, name):
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
 
-def _outline_curve(o, name):
+def _outline_curve(o, name, armado):
     """outline como curva 2D de Blender (editable por puntos de control, rellena y con grosor): los
     contornos suaves son Bézier con asas tangentes exactas (pocos puntos), los angulosos son polilíneas.
     La curva vive en el plano XY local; con plane XZ, build la pone de pie girando el objeto 90° en X."""
     from . import contours
-    regs, info, ruta = _outline_loops(o)
+    regs, info, ruta = _outline_loops(o, armado)
     if o.get('origin') == 'bottom':
         y0 = min(float(r['outer'][:, 1].min()) for r in regs)
         regs = [{'outer': r['outer'] - [0, y0], 'holes': [hh - [0, y0] for hh in r['holes']]} for r in regs]
@@ -798,15 +809,15 @@ def _outline_curve(o, name):
             for pt, (x, y) in zip(sp.points, lazo):
                 pt.co = (x, y, 0, 1)
         sp.use_cyclic_u = True
-    _record(name, o, info, ruta)
+    armado.anotar(name, o, info, ruta)
     return cu
 
 
-def _geom_data(o, name):
+def _geom_data(o, name, armado):
     """Geometría de un tipo de formato.PRIMITIVES: malla, o curva para outline con output curve."""
     if o.get('type', '').lower() == 'outline' and o.get('output') == 'curve':
-        return _outline_curve(o, name)
-    return build_mesh(o, name)
+        return _outline_curve(o, name, armado)
+    return build_mesh(o, name, armado)
 
 
 def _copy_props(src, dst):
@@ -820,12 +831,12 @@ def _copy_props(src, dst):
             pass
 
 
-def _replace_object(o, spec, name, warnings):
+def _replace_object(o, spec, name, warnings, armado):
     """Un objeto de Blender no cambia de tipo: para pasar un outline de malla a curva (o al revés) se
     crea uno nuevo con la geometría nueva y se le pasa todo lo del viejo (colecciones, padre e hijos,
     transformación, materiales, modificadores y restricciones que admita, animación y propiedades).
     Si algo falla antes de borrar el viejo, el nuevo se descarta y la escena queda como estaba."""
-    data = _geom_data(spec, name)
+    data = _geom_data(spec, name, armado)
     nuevo = bpy.data.objects.new(name + '.bs_nuevo', data)
     try:
         for c in o.users_collection:
@@ -875,7 +886,8 @@ def _geom_kind(t, o):
     return 'CURVE' if t == 'outline' and o.get('output') == 'curve' else 'MESH'
 
 
-def build_mesh(o, name):
+def build_mesh(o, name, armado=None):
+    armado = armado or _Armado()
     t = o.get('type', 'cube').lower()
     bm = bmesh.new()
     seg = int(o.get('segments', 32))
@@ -907,17 +919,17 @@ def build_mesh(o, name):
     elif t == 'tube':
         _tube(bm, o)
     elif t == 'lathe':
-        _lathe(bm, o, name)
+        _lathe(bm, o, name, armado)
     elif t == 'superellipsoid':
         _superellipsoid(bm, o)
     elif t == 'membrane':
         _membrane(bm, o)
     elif t == 'outline':
-        _outline(bm, o, name)
+        _outline(bm, o, name, armado)
     elif t == 'views':
-        _views(bm, o, name)
+        _views(bm, o, name, armado)
     elif t == 'stroke':
-        _stroke(bm, o, name)
+        _stroke(bm, o, name, armado)
     elif t == 'blobby':
         bm.free()
         me = _blobby(o, name)
@@ -1147,10 +1159,10 @@ def _move_to(o, coll):
             c.objects.unlink(o)
 
 
-def _new_object(spec, name):
+def _new_object(spec, name, armado):
     t = spec.get('type', 'cube').lower()
     if t in formato.PRIMITIVES:
-        return bpy.data.objects.new(name, _geom_data(spec, name)), _geom_kind(t, spec)
+        return bpy.data.objects.new(name, _geom_data(spec, name, armado)), _geom_kind(t, spec)
     if t == 'empty':
         o = bpy.data.objects.new(name, None)
         o.empty_display_type = spec.get('display', 'PLAIN_AXES').upper()
@@ -1173,9 +1185,11 @@ def _apply_data(o, spec, warnings):
             cu.align_y = 'CENTER'
         if 'text' in spec or not cu.body:
             cu.body = str(spec.get('text', spec.get('name')))
-        for k, attr in (('size', 'size'), ('extrude', 'extrude'), ('bevelDepth', 'bevel_depth')):
-            if k in spec:
-                setattr(cu, attr, float(spec[k]))
+        # con spec.get a la vista: así el aviso de claves mal escritas sabe que se usan
+        for attr, v in (('size', spec.get('size')), ('extrude', spec.get('extrude')),
+                        ('bevel_depth', spec.get('bevelDepth'))):
+            if v is not None:
+                setattr(cu, attr, float(v))
         if 'align' in spec:
             cu.align_x = spec['align'].upper()
         if 'alignY' in spec:
@@ -1617,12 +1631,12 @@ def _apply_motion(a, warnings):
     return dict(info, object=o.name, channel=canal, frameRange=[f0, f1], fps=fps)
 
 
-def _apply_animation(anims, warnings):
+def _apply_animation(anims, warnings, armado):
     out = 0
     for a in anims:
         if 'motion' in a:
             r = _apply_motion(a, warnings)
-            _BUILD['motions'].append(r)
+            armado.movimientos.append(r)
             out += r['frames']
             continue
         o = _obj(a['object'])
@@ -1718,121 +1732,126 @@ def _con_nombre(name, fn, *args):
         raise
 
 
-def op_build(spec):
-    """Crea o actualiza (por nombre) materiales, colecciones, objetos, luces, cámaras y animación."""
-    warnings, created, updated, removed, replaced = [], [], [], [], []
-    base_dir = spec.get('_baseDir')
-    _BUILD['baseDir'] = base_dir
-    _BUILD['outlines'] = {}
-    _BUILD['viewAt'] = {}
-    _BUILD['pixels'] = {}
-    formato.claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', warnings)
-    for os_ in spec.get('objects', []):
-        formato.claves_raras(os_, '«%s»' % os_.get('name', '?'), warnings)
-    _BUILD['sources'] = {}
-    _BUILD['motions'] = []
-
+def _limpiar(spec, cambios):
+    """Lo que se borra antes de armar: el cubo, la luz y la cámara de un archivo nuevo (removeDefaults,
+    solo si no los hizo build) y lo que nombra `delete`."""
     if spec.get('removeDefaults'):
         for n, t in DEFAULT_OBJECTS.items():
             o = bpy.data.objects.get(n)
             if o and o.type == t and 'bs_geom' not in o and 'bs_spec' not in o:
                 bpy.data.objects.remove(o, do_unlink=True)
-                removed.append(n)
+                cambios['removed'].append(n)
     for n in spec.get('delete', []):
         o = bpy.data.objects.get(n)
         if o:
             bpy.data.objects.remove(o, do_unlink=True)
-            removed.append(n)
+            cambios['removed'].append(n)
 
-    _apply_scene(spec.get('scene', {}), warnings, base_dir)
 
-    mats_new = []
-    for ms in spec.get('materials', []):
-        _, was_new = build_material(ms, base_dir)
-        if was_new:
-            mats_new.append(ms['name'])
+# el tipo de objeto de Blender de lo que no es una primitiva (las primitivas: _geom_kind)
+_TIPO_BLENDER = {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}
 
-    for cs in spec.get('collections', []):
-        cs = {'name': cs} if isinstance(cs, str) else cs
-        _collection(cs['name'], cs.get('parent'))
 
-    # 1ª pasada: crear/actualizar cada objeto con su geometría, transformación y material
-    objs = []
-    for os_ in spec.get('objects', []):
-        os_ = formato.con_hoja(os_, spec.get('sheet'))
-        name = os_['name']
-        o = bpy.data.objects.get(name)
-        t = os_.get('type', '').lower()
-        if o is not None:
-            # Un objeto existente conserva su malla salvo que el spec traiga parámetros de geometría:
-            # así se le pueden cambiar material, posición o modificadores sin rehacerlo.
-            if t:
-                want = _geom_kind(t, os_) if t in formato.PRIMITIVES else {'empty': 'EMPTY', 'text': 'FONT', 'light': 'LIGHT', 'camera': 'CAMERA'}.get(t)
-                if o.type != want and t == 'outline' and {o.type, want} == {'MESH', 'CURVE'}:
-                    o = _replace_object(o, os_, name, warnings)
-                    o['bs_geom'] = formato.geom_sig(os_)
-                    replaced.append(name)
-                elif o.type != want:
-                    warnings.append('«%s» ya existe y es %s, no %s: se omite' % (name, o.type, want))
-                    continue
-            if t in formato.PRIMITIVES and any(k in os_ for k in formato.GEOM_KEYS if k != 'type') \
-                    and o.get('bs_geom') != formato.geom_sig(os_):
-                old = o.data
-                o.data = _con_nombre(name, _geom_data, os_, name)
-                for m in old.materials:
-                    o.data.materials.append(m)
-                if old.users == 0:
-                    (bpy.data.meshes if isinstance(old, bpy.types.Mesh) else bpy.data.curves).remove(old)
-                o['bs_geom'] = formato.geom_sig(os_)
-            updated.append(name)
+def _crear_o_actualizar(os_, armado, warnings, cambios):
+    """El objeto de una pieza del spec: uno nuevo, o el que ya existe con ese nombre (con la geometría
+    rehecha si el spec la cambió). Devuelve (objeto, pieza, tipo), o None si ya existe y es de otro tipo."""
+    name = os_['name']
+    o = bpy.data.objects.get(name)
+    t = os_.get('type', '').lower()
+    if o is None:
+        t = t or 'cube'
+        os_ = dict(os_, type=t)
+        o, _ = _con_nombre(name, _new_object, os_, name, armado)
+        if t in formato.PRIMITIVES:
+            o['bs_geom'] = formato.geom_sig(os_)
+        cambios['created'].append(name)
+        return o, os_, t
+    # Un objeto existente conserva su malla salvo que el spec traiga parámetros de geometría:
+    # así se le pueden cambiar material, posición o modificadores sin rehacerlo.
+    if t:
+        want = _geom_kind(t, os_) if t in formato.PRIMITIVES else _TIPO_BLENDER.get(t)
+        if o.type != want and t == 'outline' and {o.type, want} == {'MESH', 'CURVE'}:
+            o = _replace_object(o, os_, name, warnings, armado)
+            o['bs_geom'] = formato.geom_sig(os_)
+            cambios['replaced'].append(name)
+        elif o.type != want:
+            warnings.append('«%s» ya existe y es %s, no %s: se omite' % (name, o.type, want))
+            return None
+    if t in formato.PRIMITIVES and any(k in os_ for k in formato.GEOM_KEYS if k != 'type') \
+            and o.get('bs_geom') != formato.geom_sig(os_):
+        old = o.data
+        o.data = _con_nombre(name, _geom_data, os_, name, armado)
+        for m in old.materials:
+            o.data.materials.append(m)
+        if old.users == 0:
+            (bpy.data.meshes if isinstance(old, bpy.types.Mesh) else bpy.data.curves).remove(old)
+        o['bs_geom'] = formato.geom_sig(os_)
+    cambios['updated'].append(name)
+    return o, os_, t
+
+
+def _de_pie(os_):
+    """Un outline en el plano XZ (el de la vista de frente) y sin rotation propia."""
+    return 'rotation' not in os_ and str(os_.get('plane', 'XZ')).upper() == 'XZ'
+
+
+def _en_su_vista(o, os_, t, armado):
+    """Un outline con inView va donde está en la vista (su centro), sumado a `location` (la del
+    cuerpo); de costado, girado al plano de esa vista. Una curva 2D vive en XY: se pone de pie."""
+    if t == 'outline' and os_.get('inView'):
+        if os_['name'] in armado.en_vista:
+            o['bs_view_at'] = armado.en_vista[os_['name']]
+        if o.get('bs_view_at'):
+            x, z = o['bs_view_at']
+            de_lado = str(os_.get('view', 'front')).lower() == 'side'
+            o.location = Vector(vec3(os_.get('location', (0, 0, 0)))) + Vector((0, x, z) if de_lado else (x, 0, z))
+            if de_lado and o.type == 'MESH' and not os_.get('attach') and _de_pie(os_):
+                o.rotation_euler = (0, 0, math.pi / 2)  # de pie en el plano de esa vista (YZ, de frente a +X)
+    if o.type == 'CURVE' and t == 'outline' and _de_pie(os_):
+        o.rotation_euler = (math.pi / 2, 0, 0)          # la curva 2D vive en XY: de pie, de frente a -Y
+
+
+def _apariencia(o, os_, t):
+    """Sombreado, visibilidad y cómo se ve en el visor (un cutter, de alambre y fuera del render)."""
+    if o.type == 'MESH' and 'smooth' in os_:
+        if os_['smooth']:
+            o.data.shade_smooth()
         else:
-            t = t or 'cube'
-            os_ = dict(os_, type=t)
-            o, _ = _con_nombre(name, _new_object, os_, name)
-            if t in formato.PRIMITIVES:
-                o['bs_geom'] = formato.geom_sig(os_)
-            created.append(name)
-        o['bs_spec'] = 1
-        if os_.get('collection') or not o.users_collection:
-            _move_to(o, _collection(os_.get('collection')))
-        _apply_data(o, os_, warnings)
-        _apply_transform(o, os_)
-        if t == 'outline' and os_.get('inView'):
-            # la pieza va donde está en la vista (su centro), sumado a `location` (la del cuerpo)
-            if name in _BUILD['viewAt']:
-                o['bs_view_at'] = _BUILD['viewAt'][name]
-            if o.get('bs_view_at'):
-                x, z = o['bs_view_at']
-                de_lado = str(os_.get('view', 'front')).lower() == 'side'
-                o.location = Vector(vec3(os_.get('location', (0, 0, 0)))) + Vector((0, x, z) if de_lado else (x, 0, z))
-                if de_lado and o.type == 'MESH' and 'rotation' not in os_ and not os_.get('attach') \
-                        and str(os_.get('plane', 'XZ')).upper() == 'XZ':
-                    o.rotation_euler = (0, 0, math.pi / 2)  # de pie en el plano de esa vista (YZ, de frente a +X)
-        if o.type == 'CURVE' and t == 'outline' and 'rotation' not in os_ \
-                and str(os_.get('plane', 'XZ')).upper() == 'XZ':
-            o.rotation_euler = (math.pi / 2, 0, 0)          # la curva 2D vive en XY: de pie, de frente a -Y
-        if name in _BUILD['sources']:
-            o['bs_source'] = json.dumps(_BUILD['sources'][name], ensure_ascii=False)
-        _apply_materials(o, os_, warnings)
-        if o.type == 'MESH' and 'smooth' in os_:
-            if os_['smooth']:
-                o.data.shade_smooth()
-            else:
-                o.data.shade_flat()
-        if 'hidden' in os_:
-            o.hide_set(bool(os_['hidden'])) if bpy.context.view_layer.objects.get(o.name) else None
-        if 'hideRender' in os_:
-            o.hide_render = bool(os_['hideRender'])
-        if os_.get('cutter'):
-            o.display_type = 'WIRE'
-            o.hide_render = True
-        elif 'display' in os_ and t != 'empty':
-            o.display_type = os_['display'].upper()
-        objs.append((o, os_))
+            o.data.shade_flat()
+    if 'hidden' in os_:
+        o.hide_set(bool(os_['hidden'])) if bpy.context.view_layer.objects.get(o.name) else None
+    if 'hideRender' in os_:
+        o.hide_render = bool(os_['hideRender'])
+    if os_.get('cutter'):
+        o.display_type = 'WIRE'
+        o.hide_render = True
+    elif 'display' in os_ and t != 'empty':
+        o.display_type = os_['display'].upper()
 
-    # 2ª pasada: lo que depende de otros objetos (padre, booleanos, mirar a, encuadre).
-    # Sin este update, los objetos recién creados tienen matrix_world en cero y al emparentarlos
-    # perderían su posición.
+
+def _pieza(os_, armado, warnings, cambios):
+    """1ª pasada, una pieza: su objeto con geometría, colección, datos, transformación y material."""
+    hecho = _crear_o_actualizar(os_, armado, warnings, cambios)
+    if hecho is None:
+        return None
+    o, os_, t = hecho
+    o['bs_spec'] = 1
+    if os_.get('collection') or not o.users_collection:
+        _move_to(o, _collection(os_.get('collection')))
+    _apply_data(o, os_, warnings)
+    _apply_transform(o, os_)
+    _en_su_vista(o, os_, t, armado)
+    if os_['name'] in armado.fuentes:
+        o['bs_source'] = json.dumps(armado.fuentes[os_['name']], ensure_ascii=False)
+    _apply_materials(o, os_, warnings)
+    _apariencia(o, os_, t)
+    return o, os_
+
+
+def _relacionar(objs, warnings):
+    """2ª pasada: lo que depende de otros objetos (padre, medidas finales, modificadores, mirar a).
+    Sin el update del principio, los objetos recién creados tienen matrix_world en cero y al
+    emparentarlos perderían su posición."""
     bpy.context.view_layer.update()
     for o, os_ in objs:
         if 'parent' in os_:
@@ -1860,7 +1879,10 @@ def op_build(spec):
                 bpy.context.view_layer.update()
                 _look_at(o, os_['lookAt'])
 
-    # 3ª pasada: colocar sobre superficies ya evaluadas (con sus modificadores), en el orden del spec
+
+def _colocar(objs, warnings):
+    """3ª pasada: colocar sobre superficies ya evaluadas (con sus modificadores), en el orden del spec,
+    y al final encuadrar las cámaras con `frame` (ya con todo en su lugar)."""
     for o, os_ in objs:
         if os_.get('attach'):
             bpy.context.view_layer.update()
@@ -1868,46 +1890,62 @@ def op_build(spec):
         if os_.get('onSurface') and o.type == 'MESH':
             bpy.context.view_layer.update()
             _on_surface(o, os_, warnings)
-
     bpy.context.view_layer.update()
     for o, os_ in objs:
         if o.type == 'CAMERA' and os_.get('frame'):
             frame_camera(o, os_['frame'], os_.get('view', 'iso'), float(os_.get('margin', 1.1)))
 
-    keys = _apply_animation(spec.get('animation', []), warnings)
 
+def _deshacer(mensaje):
+    """Un paso de deshacer con nombre (con Blender abierto): Ctrl+Z vuelve a antes de la operación."""
     if not bpy.app.background:
         try:
             with _ctx():
-                bpy.ops.ed.undo_push(message='blender-steroids: build')
+                bpy.ops.ed.undo_push(message='blender-steroids: ' + mensaje)
         except Exception:
             pass
-    res = {'created': created, 'updated': updated, 'materialsCreated': mats_new, 'keyframes': keys}
-    if _BUILD['motions']:
-        res['motions'] = _BUILD['motions']
-    if _BUILD['outlines']:
-        res['outlines'] = _BUILD['outlines']
-        for n, inf in _BUILD['outlines'].items():
-            if 'strokes' in inf:
-                for t in inf['strokes']:
-                    if t['index'] in inf['picked'] and t['iou'] < 0.85:
-                        warnings.append('«%s»: el trazo %d calza poco con la imagen (IoU %s): ¿es una parte fina? '
-                                        'Mira outlines y la vista previa de contour -Strokes' % (n, t['index'], t['iou']))
-            elif not inf['targetMet']:
-                warnings.append('«%s»: algún contorno no llegó a la tolerancia de %s %% (mira outlines)'
-                                % (n, inf['tolerancePercent']))
-            if inf.get('viewsMismatchPercent', 0) > 2:
-                warnings.append('«%s»: el cuerpo no mide lo mismo de alto en las dos vistas (%s %% del alto): '
-                                '¿son del mismo objeto, a la misma escala y con el mismo height?'
-                                % (n, inf['viewsMismatchPercent']))
-            if inf.get('side') == 'both' and inf.get('asymmetryPercent', 0) > 3:
-                warnings.append('«%s»: las dos mitades de la silueta difieren %s %% del alto; si de un lado '
-                                'hay un asa o un pico usa side left/right, o la foto no está de lado'
-                                % (n, inf['asymmetryPercent']))
-    if removed:
-        res['removed'] = removed
-    if replaced:
-        res['replaced'] = replaced
+
+
+def op_build(spec):
+    """Crea o actualiza (por nombre) materiales, colecciones, objetos, luces, cámaras y animación."""
+    from . import contours
+    warnings = []
+    cambios = {'created': [], 'updated': [], 'removed': [], 'replaced': []}
+    base_dir = spec.get('_baseDir')
+    armado = _Armado(base_dir)
+    formato.claves_raras({k: v for k, v in spec.items() if k != 'objects'}, 'spec', warnings)
+    for os_ in spec.get('objects', []):
+        formato.claves_raras(os_, '«%s»' % os_.get('name', '?'), warnings)
+
+    _limpiar(spec, cambios)
+    _apply_scene(spec.get('scene', {}), warnings, base_dir)
+    mats_new = []
+    for ms in spec.get('materials', []):
+        _, was_new = build_material(ms, base_dir)
+        if was_new:
+            mats_new.append(ms['name'])
+    for cs in spec.get('collections', []):
+        cs = {'name': cs} if isinstance(cs, str) else cs
+        _collection(cs['name'], cs.get('parent'))
+
+    objs = [p for p in (_pieza(formato.con_hoja(os_, spec.get('sheet')), armado, warnings, cambios)
+                        for os_ in spec.get('objects', [])) if p]
+    _relacionar(objs, warnings)
+    _colocar(objs, warnings)
+    keys = _apply_animation(spec.get('animation', []), warnings, armado)
+    _deshacer('build')
+
+    res = {'created': cambios['created'], 'updated': cambios['updated'], 'materialsCreated': mats_new,
+           'keyframes': keys}
+    if armado.movimientos:
+        res['motions'] = armado.movimientos
+    if armado.contornos:
+        res['outlines'] = armado.contornos
+        for n, inf in armado.contornos.items():
+            warnings.extend(contours.avisos(n, inf))
+    for k in ('removed', 'replaced'):
+        if cambios[k]:
+            res[k] = cambios[k]
     if warnings:
         res['warnings'] = warnings
     res['camera'] = _scene().camera.name if _scene().camera else None
@@ -2336,132 +2374,154 @@ def _parse_view(v):
     return v
 
 
-def op_fit(args):
-    """Ajuste automático de proporciones: mueve y escala las piezas indicadas hasta que la silueta del
-    render se parezca lo más posible a la de la referencia (IoU tras alinear las figuras).
+# fit: valores por omisión y pasos de la búsqueda
+_FIT_ALTO = 160              # alto (px) de la silueta comparada: más = las piezas chicas pesan más (y cuesta más)
+_FIT_RESOLUCION = 320        # alto del render: cuanto más cerca del de compare, menos sorpresas
+_FIT_ALTO_REFERENCIA = 400   # la referencia se lee hasta este alto
+_FIT_PRESUPUESTO = 400       # renders en total
+_FIT_ESCALA_MAX = 1.6        # cuánto puede crecer (o achicarse) una pieza por eje
+_FIT_MOVER_MAX = 0.25        # cuánto puede moverse, en fracción del radio de la figura
+_FIT_PASO_ESCALA = 0.18      # primer paso de escala (en logaritmo)
+_FIT_PASO_MOVER = 0.06       # primer paso de movimiento, en fracción del radio
+_FIT_FIN_ESCALA = 0.01       # con todos los pasos por debajo de estos, la búsqueda terminó
+_FIT_FIN_MOVER = 0.003       # (en fracción del radio)
+_FIT_MEJORA = 1e-4           # lo que tiene que subir la puntuación para contar como mejora
+_FIT_PESO_COLOR = 0.3        # con colors, cuánto pesan las regiones de color frente a la silueta
+_FIT_COLOR_MIN = 0.01        # un color que cubre menos de esta parte de la figura no cuenta
+_FIT_VENTANA = (-10, -5, 0, 5, 10)   # grados alrededor de la vista hallada, en las rondas siguientes
+_FIT_AZIMUT_MAX = 85         # la vista buscada no llega a ser de perfil puro
+_FIT_ELEVACION_MAX = 45.0
 
-    Con varias referencias (`references`: [{path, view}], p. ej. tres cuartos + perfil) maximiza el
-    promedio: una sola vista oblicua confunde ancho con profundidad y la segunda lo resuelve.
-    `view` de cada referencia: front|back|left|right|top|iso, un vector, o «fit» para buscarla.
 
-    args: reference(s), parts [{name, params ("sx sy sz x y z"), mirror, maxScale (1.6), maxMove}],
-    view o fitView (para una sola referencia), budget (renders, 400), rounds, resolution (320)."""
-    import tempfile
-    s = _scene()
-    # alto de la silueta comparada: más alto = las piezas chicas pesan más (y cada render cuesta más)
-    H = int(args.get('detail', 160))
-    entrada = args.get('references') or [{'path': args['reference'], 'view': args.get('view')}]
-    refs = []
-    for r in entrada:
+@contextlib.contextmanager
+def _render_guardado(s):
+    """Deja el render, la cámara y el sombreado de la escena como estaban (fit los cambia para medir)."""
+    r, sh, vs = s.render, s.display.shading, s.view_settings
+    campos = [(r, 'engine'), (r, 'resolution_x'), (r, 'resolution_y'), (r, 'resolution_percentage'),
+              (r, 'film_transparent'), (r, 'filepath'), (s, 'camera'), (sh, 'light'), (sh, 'color_type'),
+              (sh, 'show_shadows'), (sh, 'show_cavity'), (vs, 'view_transform'), (vs, 'look')]
+    antes = [getattr(o, a) for o, a in campos]
+    try:
+        yield
+    finally:
+        for (o, a), v in zip(campos, antes):
+            setattr(o, a, v)
+
+
+class _Ajuste:
+    """Un fit en curso: las referencias (máscara, recorte, vista, colores), las piezas que se mueven y
+    escalan con sus variables, la cámara con que se mide y cómo va la búsqueda."""
+
+    def __init__(self, args):
+        import tempfile
+        self.args = args
+        self.s = _scene()
+        self.camara = self.s.camera              # la de la escena: con ella se busca la vista
+        self.H = int(args.get('detail', _FIT_ALTO))
+        self.res = int(args.get('resolution', _FIT_RESOLUCION))
+        self.huecos = args.get('holes', 'fill')
+        self.peso_color = float(args.get('colorWeight', _FIT_PESO_COLOR))
+        self.colores = bool(args.get('colors'))
+        entrada = args.get('references') or [{'path': args['reference'], 'view': args.get('view')}]
+        self.refs = [self._referencia(r) for r in entrada]
+        self.nombres_mat = []
+        if self.colores:
+            self._regiones()
+        self.presupuesto = int(args.get('budget', _FIT_PRESUPUESTO))
+        self.rondas = int(args.get('rounds', 3 if any(r['fit'] for r in self.refs) else 1))
+        self.tmp = os.path.join(tempfile.mkdtemp(prefix='bs-fit-'), 'f.png')
+        self.cam = None
+        self.partes, self.vars_ = [], []
+        self.mejor, self.evals, self.historial = 0.0, 0, []
+
+    def _referencia(self, r):
         r = {'path': r} if isinstance(r, str) else dict(r)
-        mask = mascaras.subject_mask(_load_pixels(os.path.abspath(r['path']), 400), args.get('holes', 'fill'))
-        crop = mascaras.crop(mask, H)
+        ruta = os.path.abspath(r['path'])
+        px = _load_pixels(ruta, _FIT_ALTO_REFERENCIA)
+        mask = mascaras.subject_mask(px, self.huecos)
+        crop = mascaras.crop(mask, self.H)
         if crop is None:
             raise ValueError('No se detectó la figura en la referencia %s' % r['path'])
         v = _parse_view(r.get('view'))
-        busca = v == 'fit' or (v is None and args.get('fitView'))
-        refs.append({'path': os.path.abspath(r['path']), 'mask': mask, 'c': crop,
-                     'view': v if not busca and v else 'front', 'fit': bool(busca), 'vistas': [], 'iou': None,
-                     'px': _load_pixels(os.path.abspath(r['path']), 400) if args.get('colors') else None})
+        busca = v == 'fit' or (v is None and self.args.get('fitView'))
+        return {'path': ruta, 'mask': mask, 'c': crop, 'view': v if not busca and v else 'front',
+                'fit': bool(busca), 'vistas': [], 'iou': None, 'px': px if self.colores else None}
 
-    # regiones de color: cada píxel de la referencia se asigna al material más parecido. Así cuentan
-    # las piezas chicas que casi no cambian la silueta (alas pegadas al cuerpo, patas, adornos)
-    colores = bool(args.get('colors'))
-    if colores:
-        nombres_mat, pal = _palette()
-        if len(pal) < 2:
-            colores = False
-        else:
-            for ref in refs:
-                lab = mascaras.classify(ref['px'], ref['mask'], pal)
-                ref['lab'] = mascaras.crop_labels(lab, ref['mask'], H)
-                total = max(1, int(ref['mask'].sum()))
-                ref['clases'] = [c for c in range(len(pal)) if (lab == c).sum() / total >= 0.01]
-                ref['px'] = None
+    def _regiones(self):
+        """Regiones de color: cada píxel de la referencia se asigna al material más parecido. Así cuentan
+        las piezas chicas que casi no cambian la silueta (alas pegadas al cuerpo, patas, adornos)."""
+        self.nombres_mat, self.pal = _palette()
+        if len(self.pal) < 2:
+            self.colores = False
+            return
+        for ref in self.refs:
+            lab = mascaras.classify(ref['px'], ref['mask'], self.pal)
+            ref['lab'] = mascaras.crop_labels(lab, ref['mask'], self.H)
+            total = max(1, int(ref['mask'].sum()))
+            ref['clases'] = [c for c in range(len(self.pal)) if (lab == c).sum() / total >= _FIT_COLOR_MIN]
+            ref['px'] = None
 
-    guardado = (s.render.engine, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
-                s.render.film_transparent, s.camera, s.render.filepath)
-    sh = s.display.shading
-    guardado_sh = (sh.light, sh.color_type, sh.show_shadows, sh.show_cavity, s.view_settings.view_transform,
-                   s.view_settings.look)
-    RES = int(args.get('resolution', 320))   # cuanto más cerca de la de compare, menos sorpresas
-
-    def formato(ref):
+    def _resolucion(self, ref):
+        """El render con las proporciones de la referencia."""
         rh, rw = ref['mask'].shape
-        s.render.resolution_y, s.render.resolution_x = RES, max(16, round(RES * rw / rh))
-        s.render.resolution_percentage = 100
+        self.s.render.resolution_y, self.s.render.resolution_x = self.res, max(16, round(self.res * rw / rh))
+        self.s.render.resolution_percentage = 100
 
-    def buscar_vista(ref, azs=None, els=None):
-        formato(ref)
-        s.camera = guardado[5]
-        a_ = dict(args)
+    def buscar_vista(self, ref, azs=None, els=None):
+        self._resolucion(ref)
+        self.s.camera = self.camara
+        a_ = dict(self.args)
         if azs:
             a_['fitAzimuths'], a_['fitElevations'] = azs, els
         info = _fit_view(a_, ref['mask'])
         ref['view'] = info['view']
         ref['vistas'].append(dict(info, round=len(ref['vistas']) + 1))
 
-    for ref in refs:
-        if ref['fit']:
-            buscar_vista(ref)
+    def _render_de_silueta(self):
+        s = self.s
+        s.camera = self.cam
+        _set_engine(s, 'workbench')
+        s.render.film_transparent = True
 
-    _set_engine(s, 'workbench')
-    s.render.film_transparent = True
-    s.render.image_settings.file_format = 'PNG'
-    if colores:
-        # render plano con el color exacto de cada material: la clase de cada píxel es inequívoca
-        sh.light, sh.color_type = 'FLAT', 'MATERIAL'
-        sh.show_shadows = sh.show_cavity = False
-        s.view_settings.view_transform = 'Standard'
-        s.view_settings.look = 'None'
-    cam = bpy.data.objects.new('bs_fitcam', bpy.data.cameras.new('bs_fitcam'))
-    s.collection.objects.link(cam)
-    s.camera = cam
-    tmp = os.path.join(tempfile.mkdtemp(prefix='bs-fit-'), 'f.png')
+    def preparar_render(self):
+        """Workbench con fondo transparente y una cámara propia; con colors, plano y con el color exacto
+        de cada material, así la clase de cada píxel es inequívoca."""
+        s, sh = self.s, self.s.display.shading
+        self.cam = bpy.data.objects.new('bs_fitcam', bpy.data.cameras.new('bs_fitcam'))
+        s.collection.objects.link(self.cam)
+        self._render_de_silueta()
+        s.render.image_settings.file_format = 'PNG'
+        if self.colores:
+            sh.light, sh.color_type = 'FLAT', 'MATERIAL'
+            sh.show_shadows = sh.show_cavity = False
+            s.view_settings.view_transform = 'Standard'
+            s.view_settings.look = 'None'
 
-    def medir():
-        """Promedio del IoU de silueta en todas las vistas de referencia."""
-        bpy.context.view_layer.update()
-        total = 0.0
-        for ref in refs:
-            formato(ref)
-            frame_camera(cam, None, ref['view'])
-            s.render.filepath = tmp
-            bpy.ops.render.render(write_still=True)
-            px = _load_pixels(tmp)
-            alfa = px[..., 3] > 0.5
-            m = mascaras.crop(mascaras.fill_holes(alfa, args.get('holes', 'fill')), H)
-            ref['iou'] = mascaras.iou_aligned(ref['c'], m) if m is not None else 0.0
-            valor = ref['iou']
-            if colores and m is not None and ref['clases']:
-                lab = mascaras.crop_labels(mascaras.classify(px, alfa, pal), alfa, H)
-                ref['clsIou'] = mascaras.iou_classes(ref['lab'], lab, ref['clases'])
-                cw = float(args.get('colorWeight', 0.3))
-                valor = (1 - cw) * ref['iou'] + cw * sum(ref['clsIou'].values()) / len(ref['clsIou'])
-            total += valor
-        return total / len(refs)
+    def piezas(self):
+        """Las variables: escala (multiplicador, en escala logarítmica) y desplazamiento de cada pieza."""
+        figura = [o for o in self.s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
+        _, radio = _bounds(figura)
+        for pd in self.args['parts']:
+            pd = {'name': pd} if isinstance(pd, str) else pd
+            o = _obj(pd['name'])
+            espejo = _obj(pd['mirror']) if pd.get('mirror') else None
+            self.partes.append({'o': o, 'loc': o.location.copy(), 'scale': o.scale.copy(), 'mirror': espejo,
+                                'mloc': espejo.location.copy() if espejo else None,
+                                'mscale': espejo.scale.copy() if espejo else None})
+            for q in (pd.get('params') or 'sx sy sz x y z').split():
+                es_escala = q.startswith('s')
+                if es_escala:
+                    lim, paso, fin = math.log(float(pd.get('maxScale', _FIT_ESCALA_MAX))), _FIT_PASO_ESCALA, _FIT_FIN_ESCALA
+                else:
+                    lim = float(pd.get('maxMove', radio * _FIT_MOVER_MAX))
+                    paso, fin = radio * _FIT_PASO_MOVER, radio * _FIT_FIN_MOVER
+                self.vars_.append({'p': len(self.partes) - 1, 'q': q, 'v': 0.0, 'lim': lim, 'step': paso,
+                                   'paso0': paso, 'fin': fin})
 
-    # variables: escala (multiplicador, en escala logarítmica) y desplazamiento de cada pieza
-    figura = [o for o in s.objects if o.type in ('MESH', 'FONT', 'CURVE') and not o.hide_render]
-    _, radio = _bounds(figura)
-    partes, vars_ = [], []
-    for pd in args['parts']:
-        pd = {'name': pd} if isinstance(pd, str) else pd
-        o = _obj(pd['name'])
-        espejo = _obj(pd['mirror']) if pd.get('mirror') else None
-        partes.append({'o': o, 'loc': o.location.copy(), 'scale': o.scale.copy(), 'mirror': espejo,
-                       'mloc': espejo.location.copy() if espejo else None,
-                       'mscale': espejo.scale.copy() if espejo else None})
-        for q in (pd.get('params') or 'sx sy sz x y z').split():
-            es_escala = q.startswith('s')
-            lim = math.log(float(pd.get('maxScale', 1.6))) if es_escala else float(pd.get('maxMove', radio * 0.25))
-            vars_.append({'p': len(partes) - 1, 'q': q, 'v': 0.0, 'lim': lim,
-                          'step': 0.18 if es_escala else radio * 0.06})
-
-    def aplicar():
-        for i, pt in enumerate(partes):
+    def aplicar(self):
+        for i, pt in enumerate(self.partes):
             sc, mv = [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]
-            for v in vars_:
+            for v in self.vars_:
                 if v['p'] != i:
                     continue
                 ax = 'xyz'.index(v['q'][-1])
@@ -2475,99 +2535,130 @@ def op_fit(args):
                 pt['mirror'].scale = Vector([pt['mscale'][k] * sc[k] for k in range(3)])
                 pt['mirror'].location = pt['mloc'] + Vector((-mv[0], mv[1], mv[2]))
 
-    presupuesto = int(args.get('budget', 400))
-    alguna_busca = any(r['fit'] for r in refs)
-    rondas = int(args.get('rounds', 3 if alguna_busca else 1))
-    paso0 = {id(v): v['step'] for v in vars_}
+    def medir(self):
+        """Promedio del IoU de silueta en todas las vistas de referencia (con colors, mezclado con el de
+        las regiones de color)."""
+        bpy.context.view_layer.update()
+        total = 0.0
+        for ref in self.refs:
+            self._resolucion(ref)
+            frame_camera(self.cam, None, ref['view'])
+            self.s.render.filepath = self.tmp
+            bpy.ops.render.render(write_still=True)
+            px = _load_pixels(self.tmp)
+            alfa = px[..., 3] > 0.5
+            m = mascaras.crop(mascaras.fill_holes(alfa, self.huecos), self.H)
+            ref['iou'] = mascaras.iou_aligned(ref['c'], m) if m is not None else 0.0
+            valor = ref['iou']
+            if self.colores and m is not None and ref['clases']:
+                lab = mascaras.crop_labels(mascaras.classify(px, alfa, self.pal), alfa, self.H)
+                ref['clsIou'] = mascaras.iou_classes(ref['lab'], lab, ref['clases'])
+                cw = self.peso_color
+                valor = (1 - cw) * ref['iou'] + cw * sum(ref['clsIou'].values()) / len(ref['clsIou'])
+            total += valor
+        return total / len(self.refs)
 
-    def buscar(limite, r):
+    def buscar(self, limite, ronda):
         """Búsqueda por coordenadas con pasos que se achican cuando una pasada no mejora."""
-        nonlocal mejor, evals
-        for v in vars_:
-            v['step'] = paso0[id(v)] * (0.5 if r > 0 else 1.0)
-        while evals < limite:
+        for v in self.vars_:
+            v['step'] = v['paso0'] * (0.5 if ronda > 0 else 1.0)
+        while self.evals < limite:
             mejoro = False
-            for v in vars_:
-                if evals >= limite:
+            for v in self.vars_:
+                if self.evals >= limite:
                     break
                 for signo in (1, -1):
                     viejo = v['v']
                     v['v'] = max(-v['lim'], min(v['lim'], viejo + signo * v['step']))
                     if v['v'] == viejo:
                         continue
-                    aplicar()
-                    val = medir()
-                    evals += 1
-                    if val > mejor + 1e-4:
-                        mejor, mejoro = val, True
+                    self.aplicar()
+                    val = self.medir()
+                    self.evals += 1
+                    if val > self.mejor + _FIT_MEJORA:
+                        self.mejor, mejoro = val, True
                         break
                     v['v'] = viejo
-                    aplicar()
-                    if evals >= limite:
+                    self.aplicar()
+                    if self.evals >= limite:
                         break
-            historial.append(round(mejor, 4))
+            self.historial.append(round(self.mejor, 4))
             if not mejoro:
-                for v in vars_:
+                for v in self.vars_:
                     v['step'] *= 0.5
-                if all(v['step'] < (0.01 if v['q'].startswith('s') else radio * 0.003) for v in vars_):
+                if all(v['step'] < v['fin'] for v in self.vars_):
                     break
 
-    try:
-        aplicar()
-        inicio = mejor = medir()
-        inicio_por_vista = [round(r['iou'], 3) for r in refs]
-        evals, historial = 1, [round(inicio, 4)]
-        for r in range(rondas):
-            if r > 0:
-                # con las proporciones ya ajustadas, la vista se distingue mejor: buscar cerca y en espejo
-                for ref in refs:
-                    if not ref['fit']:
-                        continue
-                    az, el = ref['vistas'][-1]['azimuth'], ref['vistas'][-1]['elevation']
-                    azs = sorted({max(-85, min(85, a_)) for a_ in
-                                  [az + d for d in (-10, -5, 0, 5, 10)] + [-az + d for d in (-10, -5, 0, 5, 10)]})
-                    els = sorted({max(0.0, min(45.0, el + d)) for d in (-10.0, -5.0, 0.0, 5.0, 10.0)})
-                    buscar_vista(ref, azs, els)
-                s.camera = cam
-                _set_engine(s, 'workbench')
-                s.render.film_transparent = True
-                mejor = medir()
-                evals += 1
-            buscar(evals + (presupuesto - evals) // (rondas - r), r)
-        aplicar()
-        mejor = medir()
-    finally:
-        bpy.data.objects.remove(cam, do_unlink=True)
-        (eng, s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage,
-         s.render.film_transparent, s.camera, s.render.filepath) = guardado
-        s.render.engine = eng
-        (sh.light, sh.color_type, sh.show_shadows, sh.show_cavity, s.view_settings.view_transform,
-         s.view_settings.look) = guardado_sh
-    if not bpy.app.background:
+    def revisar_vistas(self):
+        """Con las proporciones ya ajustadas la vista se distingue mejor: buscarla de nuevo cerca de la
+        hallada y en espejo, y volver a medir."""
+        for ref in self.refs:
+            if not ref['fit']:
+                continue
+            az, el = ref['vistas'][-1]['azimuth'], ref['vistas'][-1]['elevation']
+            azs = sorted({max(-_FIT_AZIMUT_MAX, min(_FIT_AZIMUT_MAX, a_))
+                          for a_ in [az + d for d in _FIT_VENTANA] + [-az + d for d in _FIT_VENTANA]})
+            els = sorted({max(0.0, min(_FIT_ELEVACION_MAX, el + float(d))) for d in _FIT_VENTANA})
+            self.buscar_vista(ref, azs, els)
+        self._render_de_silueta()
+        self.mejor = self.medir()
+        self.evals += 1
+
+    def resultado(self, inicio, inicio_por_vista):
+        partes = {}
+        for pt in self.partes:
+            for o in [pt['o']] + ([pt['mirror']] if pt['mirror'] is not None else []):
+                partes[o.name] = {'location': r3(o.location), 'scale': r3(o.scale)}
+        vistas = []
+        for ref, i0 in zip(self.refs, inicio_por_vista):
+            v = ref['view']
+            extra = {}
+            if self.colores and ref.get('clsIou'):
+                extra['colorIoU'] = {self.nombres_mat[c]: round(x, 3) for c, x in ref['clsIou'].items()}
+            vistas.append(dict(extra, reference=ref['path'], view=[round(x, 4) for x in v] if not isinstance(v, str) else v,
+                               iouStart=i0, iouEnd=round(ref['iou'], 3),
+                               search=[{'round': x['round'], 'azimuth': x['azimuth'], 'elevation': x['elevation']}
+                                       for x in ref['vistas']]))
+        return {'iouStart': round(inicio, 3), 'iouEnd': round(self.mejor, 3), 'evals': self.evals,
+                'passes': self.historial, 'references': vistas, 'parts': partes,
+                'score': 'silueta + regiones de color' if self.colores else 'silueta',
+                'note': 'iouStart/iouEnd es la puntuación que se maximiza (promedio de las vistas). Escribe parts en el spec (location y scale) y vuelve a '
+                        'correr build (o build -Patch): las calcomanías y lo colocado con attach se recolocan.'}
+
+
+def op_fit(args):
+    """Ajuste automático de proporciones: mueve y escala las piezas indicadas hasta que la silueta del
+    render se parezca lo más posible a la de la referencia (IoU tras alinear las figuras).
+
+    Con varias referencias (`references`: [{path, view}], p. ej. tres cuartos + perfil) maximiza el
+    promedio: una sola vista oblicua confunde ancho con profundidad y la segunda lo resuelve.
+    `view` de cada referencia: front|back|left|right|top|iso, un vector, o «fit» para buscarla.
+
+    args: reference(s), parts [{name, params ("sx sy sz x y z"), mirror, maxScale (1.6), maxMove}],
+    view o fitView (para una sola referencia), budget (renders, 400), rounds, resolution (320)."""
+    aj = _Ajuste(args)
+    with _render_guardado(aj.s):
+        for ref in aj.refs:
+            if ref['fit']:
+                aj.buscar_vista(ref)
         try:
-            with _ctx():
-                bpy.ops.ed.undo_push(message='blender-steroids: fit')
-        except Exception:
-            pass
-    resultado = {}
-    for pt in partes:
-        for o in [pt['o']] + ([pt['mirror']] if pt['mirror'] is not None else []):
-            resultado[o.name] = {'location': r3(o.location), 'scale': r3(o.scale)}
-    vistas = []
-    for ref, i0 in zip(refs, inicio_por_vista):
-        v = ref['view']
-        extra = {}
-        if colores and ref.get('clsIou'):
-            extra['colorIoU'] = {nombres_mat[c]: round(x, 3) for c, x in ref['clsIou'].items()}
-        vistas.append(dict(extra, reference=ref['path'], view=[round(x, 4) for x in v] if not isinstance(v, str) else v,
-                       iouStart=i0, iouEnd=round(ref['iou'], 3),
-                       search=[{'round': x['round'], 'azimuth': x['azimuth'], 'elevation': x['elevation']}
-                               for x in ref['vistas']]))
-    return {'iouStart': round(inicio, 3), 'iouEnd': round(mejor, 3), 'evals': evals, 'passes': historial,
-            'references': vistas, 'parts': resultado,
-            'score': 'silueta + regiones de color' if colores else 'silueta',
-            'note': 'iouStart/iouEnd es la puntuación que se maximiza (promedio de las vistas). Escribe parts en el spec (location y scale) y vuelve a '
-                    'correr build (o build -Patch): las calcomanías y lo colocado con attach se recolocan.'}
+            aj.preparar_render()
+            aj.piezas()
+            aj.aplicar()
+            inicio = aj.mejor = aj.medir()
+            inicio_por_vista = [round(r['iou'], 3) for r in aj.refs]
+            aj.evals, aj.historial = 1, [round(inicio, 4)]
+            for r in range(aj.rondas):
+                if r > 0:
+                    aj.revisar_vistas()
+                aj.buscar(aj.evals + (aj.presupuesto - aj.evals) // (aj.rondas - r), r)
+            aj.aplicar()
+            aj.mejor = aj.medir()
+        finally:
+            if aj.cam is not None:
+                bpy.data.objects.remove(aj.cam, do_unlink=True)
+    _deshacer('fit')
+    return aj.resultado(inicio, inicio_por_vista)
 
 
 # ----------------------------------------------------------------------------------- revisión geométrica
@@ -2916,8 +3007,7 @@ def _contour_strokes(args):
     """contour con strokes: las partes finas de una vista como trazos (eje, ancho, si tocan el cuerpo)."""
     import numpy as np
     from . import contours
-    _BUILD['baseDir'] = None
-    px, ruta = _image_px(args)
+    px, ruta = _Armado().pixeles(args)
     excluir = args.get('exclude')
     if isinstance(excluir, str):
         excluir = [c for c in excluir.split(',') if c]
@@ -2975,8 +3065,7 @@ def op_contour(args):
     if args.get('strokes'):
         return _contour_strokes(args)
     o = dict(args, type='lathe' if args.get('lathe') else 'outline')
-    _BUILD['baseDir'] = None
-    px, ruta = _image_px(o)
+    px, ruta = _Armado().pixeles(o)
     size, axis = (o['height'], 'height') if o.get('height') else (o.get('width'), 'width')
     tol = float(o.get('tolerance', 0.25))
     if o['type'] == 'lathe':
