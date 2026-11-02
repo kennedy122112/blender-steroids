@@ -16,21 +16,25 @@
   "objects": [
     { "name": "Piso", "type": "plane", "size": 6, "material": "Piso" },
     { "name": "Viga", "type": "cube", "size": [1.6, 0.08, 0.08], "location": [0, 0, 1.6], "material": "Madera" },
-    { "name": "PosteI", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [-0.76, 0, 0], "material": "Madera" },
-    { "name": "PosteD", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [0.76, 0, 0], "material": "Madera" },
-
+    { "name": "PosteI", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [-0.76, 0, 0],
+      "material": "Madera" },
+    { "name": "PosteD", "type": "cube", "size": [0.08, 0.08, 1.6], "origin": "bottom", "location": [0.76, 0, 0],
+      "material": "Madera" },
     { "name": "Eje", "type": "empty", "location": [-0.3, 0, 1.56], "size": 0.05 },
-    { "name": "Cuerda", "type": "cylinder", "radius": 0.006, "depth": 0.66, "location": [-0.3, 0, 1.23], "material": "Metal", "parent": "Eje" },
-    { "name": "Bola", "type": "sphere", "radius": 0.07, "location": [-0.3, 0, 0.86], "material": "Metal", "parent": "Eje", "smooth": true },
-
+    { "name": "Cuerda", "type": "cylinder", "radius": 0.006, "depth": 0.66, "location": [-0.3, 0, 1.23],
+      "material": "Metal", "parent": "Eje" },
+    { "name": "Bola", "type": "sphere", "radius": 0.07, "location": [-0.3, 0, 0.86], "material": "Metal",
+      "parent": "Eje", "smooth": true },
     { "name": "Ancla", "type": "empty", "location": [0.4, 0, 0.9], "size": 0.05 },
-    { "name": "Guia", "type": "cylinder", "radius": 0.04, "depth": 0.1, "location": [0.4, 0, 1.6], "material": "Metal" },
-    { "name": "Varilla", "type": "cylinder", "radius": 0.015, "depth": 0.9, "location": [0.4, 0, 1.43], "material": "Metal", "parent": "Ancla" },
-    { "name": "Caja", "type": "cube", "size": [0.18, 0.18, 0.16], "location": [0.4, 0, 0.9], "material": "Rojo", "parent": "Ancla",
-      "modifiers": [{ "type": "bevel", "width": 0.01, "segments": 2 }] },
-
+    { "name": "Guia", "type": "cylinder", "radius": 0.04, "depth": 0.1, "location": [0.4, 0, 1.6],
+      "material": "Metal" },
+    { "name": "Varilla", "type": "cylinder", "radius": 0.015, "depth": 0.9, "location": [0.4, 0, 1.43],
+      "material": "Metal", "parent": "Ancla" },
+    { "name": "Caja", "type": "cube", "size": [0.18, 0.18, 0.16], "location": [0.4, 0, 0.9], "material": "Rojo",
+      "parent": "Ancla", "modifiers": [{ "type": "bevel", "width": 0.01, "segments": 2 }] },
     { "name": "Sol", "type": "light", "light": "sun", "energy": 3, "rotation": [50, 0, 30] },
-    { "name": "Camara", "type": "camera", "frame": ["Viga", "PosteI", "PosteD", "Bola", "Caja"], "view": "front", "margin": 1.2 }
+    { "name": "Camara", "type": "camera", "frame": ["Viga", "PosteI", "PosteD", "Bola", "Caja"], "view": "front",
+      "margin": 1.2 }
   ],
   "animation": [
     { "object": "Eje", "property": "rotation", "axis": "y",
